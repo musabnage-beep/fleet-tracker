@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.expo/
+*.hbc
+*.hbc.map
+.env
+server/data/*.db

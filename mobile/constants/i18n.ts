@@ -1,0 +1,295 @@
+export type Language = 'ar' | 'en';
+
+export const translations = {
+  ar: {
+    // Common
+    cancel: 'إلغاء',
+    save: 'حفظ',
+    delete: 'حذف',
+    close: 'إغلاق',
+    error: 'خطأ',
+    alert: 'تنبيه',
+    ok: 'حسناً',
+    add: 'إضافة',
+    create: 'إنشاء',
+    search: 'بحث',
+    version: 'الإصدار 1.0.0',
+
+    // Auth
+    login: 'تسجيل الدخول',
+    logout: 'تسجيل الخروج',
+    username: 'اسم المستخدم',
+    password: 'كلمة المرور',
+    enterUsernamePassword: 'يرجى إدخال اسم المستخدم وكلمة المرور',
+    loginFailed: 'تعذر تسجيل الدخول',
+    logoutConfirm: 'هل تريد تسجيل الخروج؟',
+
+    // Tabs - Admin
+    dashboard: 'لوحة التحكم',
+    vehicles: 'السيارات',
+    shifts: 'الورديات',
+    reports: 'التقارير',
+    settings: 'الإعدادات',
+
+    // Tabs - Employee
+    home: 'الرئيسية',
+    scanPlates: 'مسح اللوحات',
+    myAccount: 'حسابي',
+
+    // Dashboard
+    welcome: 'مرحباً',
+    todayStats: 'إحصائيات اليوم',
+    totalVehicles: 'إجمالي السيارات',
+    found: 'موجودة',
+    notInShift: 'ليست في الوردية',
+    unknown: 'غير معروفة',
+    scans: 'عمليات المسح',
+
+    // Vehicles
+    searchVehicle: 'بحث عن سيارة...',
+    vehicle: 'سيارة',
+    noVehicles: 'لا توجد سيارات',
+    pressToAddVehicle: 'اضغط + لإضافة سيارة جديدة',
+    editVehicle: 'تعديل سيارة',
+    addVehicle: 'إضافة سيارة',
+    plateNumber: 'رقم اللوحة',
+    plateNumberRequired: 'رقم اللوحة مطلوب',
+    plateExample: 'مثال: ABC 1234',
+    descriptionOptional: 'الوصف (اختياري)',
+    descriptionExample: 'مثال: شاحنة توصيل - أبيض',
+    confirmDelete: 'تأكيد الحذف',
+    deleteVehicleConfirm: 'هل تريد حذف السيارة',
+
+    // Shifts
+    shiftNameRequired: 'اسم الوردية مطلوب',
+    selectAtLeastOneVehicle: 'يرجى اختيار سيارة واحدة على الأقل',
+    deleteShiftConfirm: 'هل تريد حذف وردية',
+    noShifts: 'لا توجد ورديات',
+    pressToAddShift: 'اضغط + لإضافة وردية جديدة',
+    createNewShift: 'إنشاء وردية جديدة',
+    shiftName: 'اسم الوردية',
+    shiftNameExample: 'مثال: وردية صباحية',
+    date: 'التاريخ',
+    selectVehicles: 'اختر السيارات',
+    selected: 'محددة',
+    vehiclesInShift: 'السيارات في هذه الوردية:',
+
+    // Reports
+    noReports: 'لا توجد تقارير',
+    reportsAppearAfterScan: 'ستظهر التقارير بعد عمليات المسح',
+    scanReport: 'تقرير المسح',
+    shift: 'الوردية',
+    employee: 'الموظف',
+    notScanned: 'لم تُمسح',
+    scanResults: 'نتائج المسح',
+    description: 'الوصف',
+    status: 'الحالة',
+    downloadPdf: 'تحميل PDF',
+    pdfFailed: 'تعذر إنشاء ملف PDF',
+    total: 'الإجمالي',
+    of: 'من',
+
+    // Employee Home
+    shiftVehicles: 'سيارات الوردية',
+    startScanning: 'بدء مسح اللوحات',
+    noShiftToday: 'لا توجد وردية لليوم',
+    contactManagerForShift: 'يرجى التواصل مع المدير لإضافة وردية',
+    vehicleRequired: 'سيارة مطلوبة',
+
+    // Scan
+    cameraPermissionRequired: 'إذن الكاميرا مطلوب',
+    appNeedsCamera: 'التطبيق يحتاج الكاميرا لمسح لوحات السيارات',
+    grantPermission: 'منح الإذن',
+    scanVehiclePlates: 'مسح لوحات السيارات',
+    todayShiftContains: 'وردية اليوم تحتوي على',
+    startScan: 'بدء المسح',
+    scanning: 'جاري المسح...',
+    pointCameraAtPlate: 'وجّه الكاميرا نحو لوحة السيارة',
+    manualEntry: 'إدخال يدوي',
+    scannedPlate: 'لوحة تم مسحها',
+    enterPlateNumber: 'أدخل رقم اللوحة',
+    manualPlateEntry: 'إدخال رقم اللوحة يدوياً',
+    enterPlateYouSee: 'أدخل رقم اللوحة الذي تراه',
+    foundStatus: 'موجودة',
+    notInShiftStatus: 'ليست بالوردية',
+    unknownStatus: 'غير معروفة',
+    noPlatesScannedYet: 'لم يتم مسح أي لوحة بعد',
+    scanCompleted: 'تم إكمال المسح',
+    completeScanSubmit: 'إنهاء المسح وإرسال التقرير',
+
+    // Employee Reports
+    yourReportsAppearHere: 'ستظهر تقاريرك هنا بعد عمليات المسح',
+
+    // Profile
+    employeeRole: 'موظف',
+    server: 'الخادم',
+
+    // Settings
+    systemAdmin: 'مدير النظام',
+    serverInfo: 'معلومات الخادم',
+    serverAddress: 'عنوان الخادم',
+    userManagement: 'إدارة المستخدمين',
+    addNewUser: 'إضافة مستخدم جديد',
+    fullName: 'الاسم الكامل',
+    role: 'الدور',
+    admin: 'مدير',
+    employeeRoleName: 'موظف',
+    deleteUserConfirm: 'هل تريد حذف',
+    deleteUser: 'حذف المستخدم',
+    allFieldsRequired: 'جميع الحقول مطلوبة',
+    language: 'اللغة',
+    arabic: 'العربية',
+    english: 'English',
+    theme: 'المظهر',
+    lightMode: 'فاتح',
+    darkMode: 'داكن',
+    appSettings: 'إعدادات التطبيق',
+  },
+
+  en: {
+    // Common
+    cancel: 'Cancel',
+    save: 'Save',
+    delete: 'Delete',
+    close: 'Close',
+    error: 'Error',
+    alert: 'Alert',
+    ok: 'OK',
+    add: 'Add',
+    create: 'Create',
+    search: 'Search',
+    version: 'Version 1.0.0',
+
+    // Auth
+    login: 'Sign In',
+    logout: 'Sign Out',
+    username: 'Username',
+    password: 'Password',
+    enterUsernamePassword: 'Please enter username and password',
+    loginFailed: 'Login failed',
+    logoutConfirm: 'Do you want to sign out?',
+
+    // Tabs - Admin
+    dashboard: 'Dashboard',
+    vehicles: 'Vehicles',
+    shifts: 'Shifts',
+    reports: 'Reports',
+    settings: 'Settings',
+
+    // Tabs - Employee
+    home: 'Home',
+    scanPlates: 'Scan Plates',
+    myAccount: 'My Account',
+
+    // Dashboard
+    welcome: 'Welcome',
+    todayStats: "Today's Statistics",
+    totalVehicles: 'Total Vehicles',
+    found: 'Found',
+    notInShift: 'Not in Shift',
+    unknown: 'Unknown',
+    scans: 'Scans',
+
+    // Vehicles
+    searchVehicle: 'Search vehicle...',
+    vehicle: 'vehicle',
+    noVehicles: 'No vehicles',
+    pressToAddVehicle: 'Press + to add a new vehicle',
+    editVehicle: 'Edit Vehicle',
+    addVehicle: 'Add Vehicle',
+    plateNumber: 'Plate Number',
+    plateNumberRequired: 'Plate number is required',
+    plateExample: 'e.g. ABC 1234',
+    descriptionOptional: 'Description (optional)',
+    descriptionExample: 'e.g. delivery truck - white',
+    confirmDelete: 'Confirm Delete',
+    deleteVehicleConfirm: 'Delete vehicle',
+
+    // Shifts
+    shiftNameRequired: 'Shift name is required',
+    selectAtLeastOneVehicle: 'Please select at least one vehicle',
+    deleteShiftConfirm: 'Delete shift',
+    noShifts: 'No shifts',
+    pressToAddShift: 'Press + to add a new shift',
+    createNewShift: 'Create New Shift',
+    shiftName: 'Shift Name',
+    shiftNameExample: 'e.g. Morning Shift',
+    date: 'Date',
+    selectVehicles: 'Select Vehicles',
+    selected: 'selected',
+    vehiclesInShift: 'Vehicles in this shift:',
+
+    // Reports
+    noReports: 'No reports',
+    reportsAppearAfterScan: 'Reports will appear after scanning',
+    scanReport: 'Scan Report',
+    shift: 'Shift',
+    employee: 'Employee',
+    notScanned: 'Not Scanned',
+    scanResults: 'Scan Results',
+    description: 'Description',
+    status: 'Status',
+    downloadPdf: 'Download PDF',
+    pdfFailed: 'Failed to create PDF',
+    total: 'Total',
+    of: 'of',
+
+    // Employee Home
+    shiftVehicles: 'Shift Vehicles',
+    startScanning: 'Start Scanning Plates',
+    noShiftToday: 'No shift for today',
+    contactManagerForShift: 'Contact the manager to add a shift',
+    vehicleRequired: 'vehicle required',
+
+    // Scan
+    cameraPermissionRequired: 'Camera Permission Required',
+    appNeedsCamera: 'The app needs camera to scan vehicle plates',
+    grantPermission: 'Grant Permission',
+    scanVehiclePlates: 'Scan Vehicle Plates',
+    todayShiftContains: "Today's shift contains",
+    startScan: 'Start Scan',
+    scanning: 'Scanning...',
+    pointCameraAtPlate: 'Point camera at vehicle plate',
+    manualEntry: 'Manual Entry',
+    scannedPlate: 'scanned plate',
+    enterPlateNumber: 'Enter plate number',
+    manualPlateEntry: 'Manual Plate Entry',
+    enterPlateYouSee: 'Enter the plate number you see',
+    foundStatus: 'Found',
+    notInShiftStatus: 'Not in Shift',
+    unknownStatus: 'Unknown',
+    noPlatesScannedYet: 'No plates scanned yet',
+    scanCompleted: 'Scan Completed',
+    completeScanSubmit: 'Complete Scan & Submit Report',
+
+    // Employee Reports
+    yourReportsAppearHere: 'Your reports will appear here after scanning',
+
+    // Profile
+    employeeRole: 'Employee',
+    server: 'Server',
+
+    // Settings
+    systemAdmin: 'System Admin',
+    serverInfo: 'Server Information',
+    serverAddress: 'Server Address',
+    userManagement: 'User Management',
+    addNewUser: 'Add New User',
+    fullName: 'Full Name',
+    role: 'Role',
+    admin: 'Admin',
+    employeeRoleName: 'Employee',
+    deleteUserConfirm: 'Delete',
+    deleteUser: 'Delete User',
+    allFieldsRequired: 'All fields are required',
+    language: 'Language',
+    arabic: 'العربية',
+    english: 'English',
+    theme: 'Theme',
+    lightMode: 'Light',
+    darkMode: 'Dark',
+    appSettings: 'App Settings',
+  },
+};
+
+export type TranslationKeys = keyof typeof translations.ar;

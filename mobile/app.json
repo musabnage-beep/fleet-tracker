@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Fleet Tracker",
+    "slug": "fleet-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ebf5fc"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fleettracker.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "التطبيق يحتاج الكاميرا لمسح لوحات السيارات"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#588593",
+        "foregroundImage": "./assets/icon.png"
+      },
+      "package": "com.fleettracker.app",
+      "permissions": [
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sharing",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "التطبيق يحتاج الكاميرا لمسح لوحات السيارات"
+        }
+      ]
+    ],
+    "scheme": "fleettracker",
+    "extra": {
+      "eas": {
+        "projectId": "1583b750-fc0c-4898-a9d8-328eacd6741a"
+      },
+      "router": {}
+    },
+    "owner": "musab_nage"
+  }
+}
