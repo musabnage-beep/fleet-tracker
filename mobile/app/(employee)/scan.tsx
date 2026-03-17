@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
+import TextRecognition, { TextRecognitionScript } from '@react-native-ml-kit/text-recognition';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -13,27 +14,66 @@ import { getTodayShift, startScan, submitPlate, completeScan } from '../../servi
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Regex patterns for license plates (Arabic, Latin, mixed)
+// Common words/text to REJECT (not license plates)
+const REJECT_WORDS = new Set([
+  'EXIT', 'STOP', 'PARK', 'NO', 'ONE', 'WAY', 'ZONE', 'MAX', 'MIN',
+  'THE', 'FOR', 'AND', 'NOT', 'ARE', 'WAS', 'HAS', 'HAD', 'BUT',
+  'SPEED', 'LIMIT', 'TAXI', 'BUS', 'ROAD', 'AUTO', 'CAR', 'VAN',
+  'OPEN', 'CLOSE', 'PUSH', 'PULL', 'FREE', 'SALE', 'NEW', 'OLD',
+  'HOTEL', 'SHOP', 'CAFE', 'BANK', 'MALL', 'MART', 'RENT',
+  'KSA', 'UAE', 'USA', 'COM', 'NET', 'ORG', 'WWW', 'HTTP',
+]);
+
+// Strict plate patterns - must have BOTH letters and digits
 const PLATE_PATTERNS = [
-  // Saudi plates: 3 letters + 4 digits or variations
-  /[A-Z]{1,3}\s*\d{1,4}/gi,
-  // Arabic letters + digits
-  /[\u0621-\u064A]{1,3}\s*\d{1,4}/g,
-  // General: digits and letters combo (at least 2 chars + 2 digits)
-  /\b[A-Z0-9]{2,3}[\s\-]*\d{2,4}\b/gi,
-  /\b\d{2,4}[\s\-]*[A-Z0-9]{2,3}\b/gi,
+  // Saudi format: 1-3 Arabic letters + space + 1-4 digits
+  /[\u0621-\u064A]{1,3}\s+\d{1,4}/g,
+  // Saudi format: 1-4 digits + space + 1-3 Arabic letters
+  /\d{1,4}\s+[\u0621-\u064A]{1,3}/g,
+  // Latin format: 1-3 letters + space/dash + 3-4 digits
+  /\b[A-Z]{1,3}[\s\-]+\d{3,4}\b/gi,
+  // Latin format: 3-4 digits + space/dash + 1-3 letters
+  /\b\d{3,4}[\s\-]+[A-Z]{1,3}\b/gi,
+  // Compact: letters immediately followed by digits (e.g. ABC1234)
+  /\b[A-Z]{1,3}\d{3,4}\b/gi,
+  // Compact: digits immediately followed by letters
+  /\b\d{3,4}[A-Z]{1,3}\b/gi,
 ];
 
 function extractPlates(text: string): string[] {
   const plates: Set<string> = new Set();
-  const cleanText = text.replace(/\n/g, ' ').trim();
+  // Process each line separately to avoid cross-line matches
+  const lines = text.split(/\n/);
 
-  for (const pattern of PLATE_PATTERNS) {
-    const matches = cleanText.match(pattern);
-    if (matches) {
-      for (const m of matches) {
-        const cleaned = m.replace(/[\s\-]/g, ' ').trim().toUpperCase();
-        if (cleaned.length >= 4) {
+  for (const line of lines) {
+    const cleanLine = line.trim();
+    if (!cleanLine || cleanLine.length < 4) continue;
+
+    for (const pattern of PLATE_PATTERNS) {
+      // Reset regex lastIndex
+      pattern.lastIndex = 0;
+      const matches = cleanLine.match(pattern);
+      if (matches) {
+        for (const m of matches) {
+          const cleaned = m.replace(/[\s\-]+/g, ' ').trim().toUpperCase();
+
+          // Must be 4-10 chars (typical plate length)
+          if (cleaned.length < 4 || cleaned.length > 10) continue;
+
+          // Must contain at least one digit
+          if (!/\d/.test(cleaned)) continue;
+
+          // Must contain at least one letter (Arabic or Latin)
+          if (!/[A-Z\u0621-\u064A]/.test(cleaned)) continue;
+
+          // Reject common words
+          const justLetters = cleaned.replace(/[\d\s]/g, '');
+          if (REJECT_WORDS.has(justLetters)) continue;
+
+          // Must have at least 2 digits
+          const digitCount = (cleaned.match(/\d/g) || []).length;
+          if (digitCount < 2) continue;
+
           plates.add(cleaned);
         }
       }
@@ -85,6 +125,7 @@ export default function ScanScreen() {
       setSessionId(session_id);
       setScanning(true);
       setResults([]);
+      submittedPlatesRef.current.clear();
       // Start auto-scanning
       intervalRef.current = setInterval(captureAndProcess, 2000);
     } catch (e: any) {
@@ -92,8 +133,11 @@ export default function ScanScreen() {
     }
   };
 
+  // Track already-submitted plates to avoid duplicate OCR submissions
+  const submittedPlatesRef = useRef<Set<string>>(new Set());
+
   const captureAndProcess = async () => {
-    if (!cameraRef.current || processing) return;
+    if (!cameraRef.current || processing || !sessionId) return;
 
     const now = Date.now();
     if (now - lastScanTime < 1500) return;
@@ -103,7 +147,7 @@ export default function ScanScreen() {
       setProcessing(true);
       // Take photo
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
+        quality: 0.7,
         skipProcessing: true,
       });
 
@@ -113,16 +157,41 @@ export default function ScanScreen() {
         [
           { resize: { width: 1200 } },
         ],
-        { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
       );
 
-      // Since we can't run ML Kit directly in Expo managed workflow,
-      // we'll use a simulated OCR approach - in production, you'd use
-      // react-native-mlkit-ocr or a custom dev build
-      // For now, we provide a manual entry option alongside camera
+      // Run ML Kit text recognition on the image
+      const ocrResult = await TextRecognition.recognize(
+        enhanced.uri,
+        TextRecognitionScript.LATIN
+      );
 
-      // Try to use the Google ML Kit via fetch to our server
-      // (In production, this would be on-device ML Kit)
+      if (ocrResult && ocrResult.text) {
+        // Also try Arabic recognition
+        let fullText = ocrResult.text;
+        try {
+          const arabicResult = await TextRecognition.recognize(
+            enhanced.uri,
+            TextRecognitionScript.DEVANAGARI // Closest available for Arabic-like scripts
+          );
+          if (arabicResult?.text) {
+            fullText += '\n' + arabicResult.text;
+          }
+        } catch (_) {
+          // Arabic recognition may not be available, that's ok
+        }
+
+        // Extract plates from OCR text
+        const detectedPlates = extractPlates(fullText);
+
+        // Submit each new plate
+        for (const plate of detectedPlates) {
+          if (!submittedPlatesRef.current.has(plate)) {
+            submittedPlatesRef.current.add(plate);
+            await submitPlateNumber(plate);
+          }
+        }
+      }
 
     } catch (e) {
       // Silent fail for individual frames
