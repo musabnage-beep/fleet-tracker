@@ -2,6 +2,7 @@ const express = require('express');
 const XLSX = require('xlsx');
 const { getDb } = require('../database');
 const { authMiddleware, adminOnly } = require('../auth');
+const { normalizePlate } = require('../plateUtils');
 
 const router = express.Router();
 
@@ -180,6 +181,20 @@ router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
   const db = await getDb();
   await db.prepare('UPDATE vehicles SET is_active = 0 WHERE id = ?').run(Number(req.params.id));
   res.json({ success: true });
+});
+
+// Test plate normalization
+router.get('/test-plate/:plate', authMiddleware, async (req, res) => {
+  const plate = decodeURIComponent(req.params.plate);
+  const normalized = normalizePlate(plate);
+  const db = await getDb();
+  const { findVehicleByPlate } = require('../plateUtils');
+  const vehicle = await findVehicleByPlate(db, plate);
+  res.json({
+    input: plate,
+    normalized,
+    matched_vehicle: vehicle || null,
+  });
 });
 
 module.exports = router;

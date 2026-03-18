@@ -2,6 +2,7 @@ const express = require('express');
 const XLSX = require('xlsx');
 const { getDb } = require('../database');
 const { authMiddleware, adminOnly } = require('../auth');
+const { normalizePlate, findVehicleByPlate } = require('../plateUtils');
 
 const router = express.Router();
 
@@ -25,12 +26,16 @@ router.post('/scan/plate', authMiddleware, async (req, res) => {
   const session = await db.prepare('SELECT * FROM scan_sessions WHERE id = ?').get(session_id);
   if (!session) return res.status(404).json({ error: 'جلسة المسح غير موجودة' });
 
-  const normalizedPlate = plate_number.trim().toUpperCase();
+  const normalizedInput = normalizePlate(plate_number);
+  const displayPlate = plate_number.trim().toUpperCase();
 
-  const existing = await db.prepare('SELECT * FROM scan_results WHERE session_id = ? AND plate_number = ?').get(session_id, normalizedPlate);
-  if (existing) return res.json({ ...existing, duplicate: true });
+  // Check duplicates using normalized comparison
+  const existingResults = await db.prepare('SELECT * FROM scan_results WHERE session_id = ?').all(session_id);
+  const duplicate = existingResults.find(r => normalizePlate(r.plate_number) === normalizedInput);
+  if (duplicate) return res.json({ ...duplicate, duplicate: true });
 
-  const vehicle = await db.prepare('SELECT * FROM vehicles WHERE plate_number = ? AND is_active = 1').get(normalizedPlate);
+  // Smart vehicle matching: Arabic "ر ص ب 1527" matches Latin "1527 RSB"
+  const vehicle = await findVehicleByPlate(db, plate_number);
 
   let status;
   if (vehicle) {
@@ -40,7 +45,8 @@ router.post('/scan/plate', authMiddleware, async (req, res) => {
     status = 'unknown';
   }
 
-  const result = await db.prepare('INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)').run(session_id, normalizedPlate, vehicle ? vehicle.id : null, status);
+  // Store the plate as the user/OCR sent it, plus the matched vehicle
+  const result = await db.prepare('INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)').run(session_id, displayPlate, vehicle ? vehicle.id : null, status);
   const scanResult = await db.prepare('SELECT * FROM scan_results WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({ ...scanResult, duplicate: false });
 });
@@ -106,8 +112,8 @@ router.get('/pdf/:sessionId', authMiddleware, adminOnly, async (req, res) => {
     FROM shift_vehicles sv JOIN vehicles v ON sv.vehicle_id = v.id WHERE sv.shift_id = ?
   `).all(report.session.shift_id);
 
-  const scannedPlates = new Set(report.results.map(r => r.plate_number));
-  const notScanned = shiftVehicles.filter(v => !scannedPlates.has(v.plate_number));
+  const scannedNormalized = new Set(report.results.map(r => normalizePlate(r.plate_number)));
+  const notScanned = shiftVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
 
   res.json({ ...report, shift_vehicles: shiftVehicles, not_scanned: notScanned });
 });
@@ -124,8 +130,8 @@ router.get('/excel/:sessionId', authMiddleware, adminOnly, async (req, res) => {
       JOIN vehicles v ON sv.vehicle_id = v.id WHERE sv.shift_id = ?
     `).all(report.session.shift_id);
 
-    const scannedPlates = new Set(report.results.map(r => r.plate_number));
-    const notScanned = shiftVehicles.filter(v => !scannedPlates.has(v.plate_number));
+    const scannedNormalized = new Set(report.results.map(r => normalizePlate(r.plate_number)));
+    const notScanned = shiftVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
 
     // Summary sheet
     const summaryData = [
@@ -173,7 +179,8 @@ router.get('/excel/:sessionId', authMiddleware, adminOnly, async (req, res) => {
     const buffer = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
     res.json({ data: buffer, filename: `report_${report.session.date}_${report.session.shift_name}.xlsx` });
   } catch (e) {
-    res.status(500).json({ error: 'فشل إنشاء ملف Excel' });
+    console.error('Excel export error:', e);
+    res.status(500).json({ error: 'فشل إنشاء ملف Excel: ' + (e.message || 'خطأ غير معروف') });
   }
 });
 
