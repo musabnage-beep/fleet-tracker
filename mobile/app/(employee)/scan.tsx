@@ -20,7 +20,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { getTodayShift, startScan, submitPlate, completeScan } from '../../services/api';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Common words/text to REJECT (not license plates)
 const REJECT_WORDS = new Set([
@@ -30,6 +30,12 @@ const REJECT_WORDS = new Set([
   'OPEN', 'CLOSE', 'PUSH', 'PULL', 'FREE', 'SALE', 'NEW', 'OLD',
   'HOTEL', 'SHOP', 'CAFE', 'BANK', 'MALL', 'MART', 'RENT',
   'KSA', 'UAE', 'USA', 'COM', 'NET', 'ORG', 'WWW', 'HTTP',
+]);
+
+// Valid Saudi plate Latin letters (only these appear on Saudi plates)
+const VALID_SAUDI_LETTERS = new Set([
+  'A', 'B', 'D', 'E', 'G', 'H', 'J', 'K', 'L', 'N',
+  'R', 'S', 'T', 'U', 'V', 'X', 'Z',
 ]);
 
 // Strict plate patterns - must have BOTH letters and digits
@@ -48,39 +54,75 @@ const PLATE_PATTERNS = [
   /\b\d{3,4}[A-Z]{1,3}\b/gi,
 ];
 
+// OCR common misreads correction map
+const OCR_CORRECTIONS: Record<string, string> = {
+  'O': '0', 'I': '1', 'l': '1', 'Q': '0',
+  'o': '0', 'i': '1', '|': '1', 'Z': '2',
+};
+
+// Fix common OCR misreads in plate text
+function fixOcrMisreads(text: string): string {
+  // Split into letter and digit parts
+  const parts = text.split(/(\d+)/);
+  let fixed = '';
+  for (const part of parts) {
+    if (/^\d+$/.test(part)) {
+      fixed += part;
+    } else {
+      // In the letter portion, fix O->0 only if surrounded by digits
+      let fixedPart = '';
+      for (const ch of part) {
+        // 'O' in letter context stays 'O', but 'I' and 'l' in digit context become '1'
+        fixedPart += ch;
+      }
+      fixed += fixedPart;
+    }
+  }
+
+  // Fix digits that look like letters: in digit sections, O->0, I->1
+  fixed = fixed.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
+  fixed = fixed.replace(/(\d)I/g, '$11').replace(/I(\d)/g, '1$1');
+  fixed = fixed.replace(/(\d)l/g, '$11').replace(/l(\d)/g, '1$1');
+
+  return fixed;
+}
+
+// Validate if letters are valid Saudi plate letters
+function isValidSaudiPlate(letters: string): boolean {
+  for (const ch of letters.toUpperCase()) {
+    if (ch === ' ' || ch === '-') continue;
+    if (/[A-Z]/.test(ch) && !VALID_SAUDI_LETTERS.has(ch)) return false;
+  }
+  return true;
+}
+
 function extractPlates(text: string): string[] {
   const plates: Set<string> = new Set();
-  // Process each line separately to avoid cross-line matches
   const lines = text.split(/\n/);
 
   for (const line of lines) {
-    const cleanLine = line.trim();
+    const cleanLine = fixOcrMisreads(line.trim());
     if (!cleanLine || cleanLine.length < 4) continue;
 
     for (const pattern of PLATE_PATTERNS) {
-      // Reset regex lastIndex
       pattern.lastIndex = 0;
       const matches = cleanLine.match(pattern);
       if (matches) {
         for (const m of matches) {
           const cleaned = m.replace(/[\s\-]+/g, ' ').trim().toUpperCase();
 
-          // Must be 4-10 chars (typical plate length)
           if (cleaned.length < 4 || cleaned.length > 10) continue;
-
-          // Must contain at least one digit
           if (!/\d/.test(cleaned)) continue;
-
-          // Must contain at least one letter (Arabic or Latin)
           if (!/[A-Z\u0621-\u064A]/.test(cleaned)) continue;
 
-          // Reject common words
           const justLetters = cleaned.replace(/[\d\s]/g, '');
           if (REJECT_WORDS.has(justLetters)) continue;
 
-          // Must have at least 2 digits
           const digitCount = (cleaned.match(/\d/g) || []).length;
           if (digitCount < 2) continue;
+
+          // Validate Saudi plate letters
+          if (/[A-Z]/.test(justLetters) && !isValidSaudiPlate(justLetters)) continue;
 
           plates.add(cleaned);
         }
@@ -89,6 +131,10 @@ function extractPlates(text: string): string[] {
   }
   return Array.from(plates);
 }
+
+// Confidence-based plate detection: track candidates across multiple frames
+type PlateCandidate = { plate: string; count: number; firstSeen: number; };
+const CONFIDENCE_THRESHOLD = 2; // Need to see plate in 2+ frames to confirm
 
 export default function ScanScreen() {
   const { t, isRTL } = useLanguage();
@@ -138,8 +184,9 @@ export default function ScanScreen() {
       setScanning(true);
       setResults([]);
       submittedPlatesRef.current.clear();
-      // Start auto-scanning
-      intervalRef.current = setInterval(captureAndProcess, 2000);
+      plateCandidatesRef.current.clear();
+      // Start auto-scanning - faster interval for confidence tracking
+      intervalRef.current = setInterval(captureAndProcess, 1500);
     } catch (e: any) {
       Alert.alert(t('error'), e.message);
     }
@@ -147,57 +194,94 @@ export default function ScanScreen() {
 
   // Track already-submitted plates to avoid duplicate OCR submissions
   const submittedPlatesRef = useRef<Set<string>>(new Set());
+  // Confidence tracking: plates must appear in multiple frames
+  const plateCandidatesRef = useRef<Map<string, PlateCandidate>>(new Map());
 
   const captureAndProcess = async () => {
-    // Use refs instead of state to avoid stale closure in setInterval
     if (!cameraRef.current || processingRef.current || !sessionIdRef.current) return;
 
-    // Throttle: skip if last scan was less than 1.5s ago
     const now = Date.now();
-    if (now - lastScanTimeRef.current < 1500) return;
+    if (now - lastScanTimeRef.current < 1200) return;
     lastScanTimeRef.current = now;
 
     try {
       processingRef.current = true;
       setProcessing(true);
-      // Take photo
+
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
+        quality: 0.9,
         skipProcessing: true,
       });
 
-      // Enhance image for better OCR - higher resolution for plates
-      const enhanced = await ImageManipulator.manipulateAsync(
-        photo.uri,
-        [
-          { resize: { width: 1600 } },
-        ],
-        { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      // Run ML Kit text recognition on the image
       if (!TextRecognition) {
         console.warn('OCR not available - use manual entry');
         return;
       }
 
-      // Try LATIN recognition (picks up digits + Latin letters)
-      const ocrResult = await TextRecognition.recognize(enhanced.uri);
+      // Multi-pass OCR: full image + cropped plate region
+      const allPlates: string[] = [];
 
-      if (ocrResult && ocrResult.text) {
-        let fullText = ocrResult.text;
-        console.log('[OCR] Detected text:', fullText);
+      // Pass 1: Full image at high resolution
+      const fullEnhanced = await ImageManipulator.manipulateAsync(
+        photo.uri,
+        [{ resize: { width: 2000 } }],
+        { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      const fullResult = await TextRecognition.recognize(fullEnhanced.uri);
+      if (fullResult?.text) {
+        console.log('[OCR-Full] Text:', fullResult.text);
+        allPlates.push(...extractPlates(fullResult.text));
+      }
 
-        // Extract plates from OCR text
-        const detectedPlates = extractPlates(fullText);
-        console.log('[OCR] Extracted plates:', detectedPlates);
+      // Pass 2: Crop to center plate region (where scan frame is)
+      // The scan frame is roughly in center-bottom 40% area
+      const cropEnhanced = await ImageManipulator.manipulateAsync(
+        photo.uri,
+        [
+          { crop: {
+            originX: photo.width * 0.1,
+            originY: photo.height * 0.3,
+            width: photo.width * 0.8,
+            height: photo.height * 0.4,
+          }},
+          { resize: { width: 2000 } },
+        ],
+        { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      const cropResult = await TextRecognition.recognize(cropEnhanced.uri);
+      if (cropResult?.text) {
+        console.log('[OCR-Crop] Text:', cropResult.text);
+        allPlates.push(...extractPlates(cropResult.text));
+      }
 
-        // Submit each new plate
-        for (const plate of detectedPlates) {
-          if (!submittedPlatesRef.current.has(plate)) {
+      // Deduplicate plates from both passes
+      const uniquePlates = [...new Set(allPlates)];
+      console.log('[OCR] All candidates:', uniquePlates);
+
+      // Confidence tracking: only submit if seen in 2+ frames
+      for (const plate of uniquePlates) {
+        if (submittedPlatesRef.current.has(plate)) continue;
+
+        const existing = plateCandidatesRef.current.get(plate);
+        if (existing) {
+          existing.count++;
+          // Plate confirmed in multiple frames - submit it!
+          if (existing.count >= CONFIDENCE_THRESHOLD) {
             submittedPlatesRef.current.add(plate);
+            plateCandidatesRef.current.delete(plate);
             await submitPlateNumber(plate);
           }
+        } else {
+          plateCandidatesRef.current.set(plate, {
+            plate, count: 1, firstSeen: now,
+          });
+        }
+      }
+
+      // Clean old candidates (older than 10 seconds)
+      for (const [key, candidate] of plateCandidatesRef.current) {
+        if (now - candidate.firstSeen > 10000) {
+          plateCandidatesRef.current.delete(key);
         }
       }
 
