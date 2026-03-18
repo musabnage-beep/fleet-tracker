@@ -9,16 +9,23 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { APP_CONFIG } from '../../constants/config';
 import { useAuth } from '../../contexts/AuthContext';
-import { getUsers, createUser, deleteUser } from '../../services/api';
+import { useAppSettings } from '../../contexts/AppSettingsContext';
+import { getUsers, createUser, deleteUser, resetUserDevice, updateAppSettings, uploadLogo } from '../../services/api';
+import * as ImagePicker from 'expo-image-picker';
+import { Image } from 'react-native';
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { t, isRTL, lang, setLanguage } = useLanguage();
   const { colors, mode, setTheme } = useTheme();
+  const { appName, companyName, logo, refreshSettings } = useAppSettings();
   const router = useRouter();
   const [users, setUsers] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [customizeModal, setCustomizeModal] = useState(false);
+  const [editAppName, setEditAppName] = useState('');
+  const [editCompanyName, setEditCompanyName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
@@ -72,6 +79,62 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleSaveCustomize = async () => {
+    setSaving(true);
+    try {
+      await updateAppSettings({ appName: editAppName, companyName: editCompanyName });
+      await refreshSettings();
+      setCustomizeModal(false);
+      Alert.alert(t('success') || 'نجح', t('settingsSaved') || 'تم حفظ الإعدادات');
+    } catch (e: any) {
+      Alert.alert(t('error'), e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangeLogo = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.5,
+        base64: true,
+      });
+      if (!result.canceled && result.assets[0].base64) {
+        await uploadLogo(result.assets[0].base64);
+        await refreshSettings();
+        Alert.alert(t('success') || 'نجح', t('logoUpdated') || 'تم تحديث الشعار');
+      }
+    } catch (e: any) {
+      Alert.alert(t('error'), e.message);
+    }
+  };
+
+  const handleResetDevice = (u: any) => {
+    Alert.alert(
+      t('resetDevice') || 'إعادة تعيين الجهاز',
+      `${t('resetDeviceConfirm') || 'هل تريد إعادة تعيين جهاز'} "${u.name}"?`,
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('reset') || 'إعادة تعيين',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await resetUserDevice(u.id);
+              await loadUsers();
+              Alert.alert(t('success') || 'نجح', t('deviceResetSuccess') || 'تم إعادة تعيين الجهاز');
+            } catch (e: any) {
+              Alert.alert(t('error'), e.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleDeleteUser = (u: any) => {
     Alert.alert(t('deleteUser'), `${t('deleteUserConfirm')} "${u.name}"?`, [
       { text: t('cancel'), style: 'cancel' },
@@ -103,6 +166,35 @@ export default function SettingsScreen() {
         <View>
           <Text style={[styles.profileName, { color: colors.textOnPrimary }]}>{user?.name}</Text>
           <Text style={[styles.profileRole, { writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('systemAdmin')}</Text>
+        </View>
+      </View>
+
+      {/* App Customization */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textDark, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('appCustomization') || 'تخصيص التطبيق'}</Text>
+        <View style={[styles.infoCard, { backgroundColor: colors.card, alignItems: 'center', gap: 12 }]}>
+          {logo ? (
+            <Image source={{ uri: `data:image/png;base64,${logo}` }} style={{ width: 60, height: 60, borderRadius: 30 }} />
+          ) : (
+            <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
+              <Ionicons name="car-sport" size={28} color={colors.textOnPrimary} />
+            </View>
+          )}
+          <Text style={[styles.infoValue, { color: colors.textDark, fontSize: 16 }]}>{appName}</Text>
+          <Text style={[styles.infoLabel, { color: colors.textMedium }]}>{companyName}</Text>
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              style={[styles.addBtn, { backgroundColor: colors.primary }]}
+              onPress={() => { setEditAppName(appName); setEditCompanyName(companyName); setCustomizeModal(true); }}
+            >
+              <Ionicons name="create-outline" size={16} color={colors.textOnPrimary} />
+              <Text style={[styles.addBtnText, { color: colors.textOnPrimary }]}>{t('editName') || 'تعديل الاسم'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.addBtn, { backgroundColor: '#28a745' }]} onPress={handleChangeLogo}>
+              <Ionicons name="image-outline" size={16} color="#fff" />
+              <Text style={[styles.addBtnText, { color: '#fff' }]}>{t('changeLogo') || 'تغيير الشعار'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -183,11 +275,18 @@ export default function SettingsScreen() {
                 </Text>
               </View>
             </View>
-            {u.id !== user?.id && (
-              <TouchableOpacity onPress={() => handleDeleteUser(u)}>
-                <Ionicons name="trash-outline" size={18} color={colors.danger} />
-              </TouchableOpacity>
-            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {u.device_id && (
+                <TouchableOpacity onPress={() => handleResetDevice(u)}>
+                  <Ionicons name="phone-portrait-outline" size={18} color={colors.warning} />
+                </TouchableOpacity>
+              )}
+              {u.id !== user?.id && (
+                <TouchableOpacity onPress={() => handleDeleteUser(u)}>
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         ))}
       </View>
@@ -197,6 +296,39 @@ export default function SettingsScreen() {
         <Ionicons name="log-out-outline" size={22} color={colors.danger} />
         <Text style={[styles.logoutText, { color: colors.danger }]}>{t('logout')}</Text>
       </TouchableOpacity>
+
+      {/* Customize Modal */}
+      <Modal visible={customizeModal} transparent animationType="slide">
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <Text style={[styles.modalTitle, { color: colors.textDark }]}>{t('appCustomization') || 'تخصيص التطبيق'}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('appNameLabel') || 'اسم التطبيق'}</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.surface, color: colors.textDark, borderColor: colors.border, textAlign: isRTL ? 'right' : 'left' }]}
+              value={editAppName}
+              onChangeText={setEditAppName}
+            />
+            <Text style={[styles.fieldLabel, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('companyNameLabel') || 'اسم الشركة'}</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.surface, color: colors.textDark, borderColor: colors.border, textAlign: isRTL ? 'right' : 'left' }]}
+              value={editCompanyName}
+              onChangeText={setEditCompanyName}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]} onPress={() => setCustomizeModal(false)}>
+                <Text style={[styles.cancelBtnText, { color: colors.textMedium }]}>{t('cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: colors.primary }, saving && { opacity: 0.7 }]}
+                onPress={handleSaveCustomize}
+                disabled={saving}
+              >
+                {saving ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : <Text style={[styles.saveBtnText, { color: colors.textOnPrimary }]}>{t('save')}</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add User Modal */}
       <Modal visible={modalVisible} transparent animationType="slide">

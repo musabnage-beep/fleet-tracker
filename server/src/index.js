@@ -6,6 +6,8 @@ const vehiclesRouter = require('./routes/vehicles');
 const shiftsRouter = require('./routes/shifts');
 const reportsRouter = require('./routes/reports');
 
+const { authMiddleware, adminOnly } = require('./auth');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -24,8 +26,47 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// App Settings (public GET, admin PUT)
+app.get('/api/settings', async (req, res) => {
+  const { getDb } = require('./database');
+  const db = await getDb();
+  const rows = await db.prepare('SELECT key, value FROM app_settings').all();
+  const settings = {};
+  rows.forEach(r => { settings[r.key] = r.value; });
+  res.json(settings);
+});
+
+app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
+  const { getDb } = require('./database');
+  const db = await getDb();
+  const { appName, companyName } = req.body;
+  for (const [key, value] of Object.entries({ appName, companyName })) {
+    if (value !== undefined) {
+      const existing = await db.prepare('SELECT key FROM app_settings WHERE key = ?').get(key);
+      if (existing) {
+        await db.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run(String(value), key);
+      } else {
+        await db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run(key, String(value));
+      }
+    }
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/settings/logo', authMiddleware, adminOnly, async (req, res) => {
+  const { getDb } = require('./database');
+  const db = await getDb();
+  const { logo } = req.body;
+  const existing = await db.prepare('SELECT key FROM app_settings WHERE key = ?').get('logo');
+  if (existing) {
+    await db.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run(logo, 'logo');
+  } else {
+    await db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run('logo', logo);
+  }
+  res.json({ success: true });
+});
+
 // Admin reset - clears all data except users
-const { authMiddleware, adminOnly } = require('./auth');
 app.post('/api/admin/reset', authMiddleware, adminOnly, async (req, res) => {
   const { getDb } = require('./database');
   const db = await getDb();

@@ -197,9 +197,11 @@ async function initializeDatabase() {
         password_hash TEXT NOT NULL,
         name TEXT NOT NULL,
         role TEXT NOT NULL CHECK(role IN ('admin', 'employee')),
+        device_id TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await db.exec(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)`);
     await db.exec(`
       CREATE TABLE IF NOT EXISTS vehicles (
         id SERIAL PRIMARY KEY,
@@ -253,8 +255,10 @@ async function initializeDatabase() {
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin', 'employee')),
+      device_id TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    await db.exec(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)`);
     await db.exec(`CREATE TABLE IF NOT EXISTS vehicles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       plate_number TEXT UNIQUE NOT NULL,
@@ -299,6 +303,9 @@ async function initializeDatabase() {
       FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
     )`);
   }
+
+  // Add device_id column if not exists (for existing databases)
+  try { await db.exec(`ALTER TABLE users ADD COLUMN device_id TEXT`); } catch(e) {}
 
   // Create default users if none exist
   const userCount = await db.prepare('SELECT COUNT(*) as count FROM users').get();

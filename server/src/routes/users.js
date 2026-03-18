@@ -5,10 +5,10 @@ const { generateToken, authMiddleware, adminOnly } = require('../auth');
 
 const router = express.Router();
 
-// Login
+// Login with device lock
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, device_id } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان' });
     }
@@ -17,6 +17,19 @@ router.post('/login', async (req, res) => {
     const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    }
+
+    // Device lock check
+    if (device_id && user.device_id && user.device_id !== device_id) {
+      return res.status(403).json({
+        error: 'هذا الحساب مسجل على جهاز آخر. تواصل مع المدير لإعادة تعيين الجهاز',
+        code: 'DEVICE_LOCKED'
+      });
+    }
+
+    // Store device_id on first login
+    if (device_id && !user.device_id) {
+      await db.prepare('UPDATE users SET device_id = ? WHERE id = ?').run(device_id, user.id);
     }
 
     const token = generateToken(user);
@@ -32,14 +45,14 @@ router.post('/login', async (req, res) => {
 // Get current user profile
 router.get('/me', authMiddleware, async (req, res) => {
   const db = await getDb();
-  const user = await db.prepare('SELECT id, username, name, role, created_at FROM users WHERE id = ?').get(req.user.id);
+  const user = await db.prepare('SELECT id, username, name, role, device_id, created_at FROM users WHERE id = ?').get(req.user.id);
   res.json(user);
 });
 
 // List all users (admin only)
 router.get('/', authMiddleware, adminOnly, async (req, res) => {
   const db = await getDb();
-  const users = await db.prepare('SELECT id, username, name, role, created_at FROM users ORDER BY created_at DESC').all();
+  const users = await db.prepare('SELECT id, username, name, role, device_id, created_at FROM users ORDER BY created_at DESC').all();
   res.json(users);
 });
 
@@ -66,6 +79,13 @@ router.post('/', authMiddleware, adminOnly, async (req, res) => {
     }
     res.status(500).json({ error: 'حدث خطأ في الخادم' });
   }
+});
+
+// Reset device (admin only)
+router.put('/:id/reset-device', authMiddleware, adminOnly, async (req, res) => {
+  const db = await getDb();
+  await db.prepare('UPDATE users SET device_id = NULL WHERE id = ?').run(Number(req.params.id));
+  res.json({ success: true });
 });
 
 // Delete user (admin only)

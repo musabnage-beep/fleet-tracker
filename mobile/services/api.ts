@@ -31,10 +31,10 @@ async function request(endpoint: string, options: RequestInit = {}) {
 }
 
 // Auth
-export async function login(username: string, password: string) {
+export async function login(username: string, password: string, device_id?: string) {
   const data = await request('/users/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, device_id }),
   });
   await AsyncStorage.setItem(TOKEN_KEY, data.token);
   await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
@@ -59,6 +59,10 @@ export const updateVehicle = (id: number, data: { plate_number?: string; descrip
   request(`/vehicles/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteVehicle = (id: number) =>
   request(`/vehicles/${id}`, { method: 'DELETE' });
+export const importVehicles = (vehicles: { plate_number: string; description?: string }[]) =>
+  request('/vehicles/import', { method: 'POST', body: JSON.stringify({ vehicles }) });
+export const importVehiclesFile = (fileData: string) =>
+  request('/vehicles/import-file', { method: 'POST', body: JSON.stringify({ fileData }) });
 
 // Shifts
 export const getShifts = (date?: string) =>
@@ -90,3 +94,15 @@ export const createUser = (data: { username: string; password: string; name: str
   request('/users', { method: 'POST', body: JSON.stringify(data) });
 export const deleteUser = (id: number) =>
   request(`/users/${id}`, { method: 'DELETE' });
+export const resetUserDevice = (id: number) =>
+  request(`/users/${id}/reset-device`, { method: 'PUT' });
+
+// Reports Excel
+export const getReportExcel = (sessionId: number) => request(`/reports/excel/${sessionId}`);
+
+// App Settings
+export const getAppSettings = () => request('/settings');
+export const updateAppSettings = (data: { appName?: string; companyName?: string }) =>
+  request('/settings', { method: 'PUT', body: JSON.stringify(data) });
+export const uploadLogo = (logo: string) =>
+  request('/settings/logo', { method: 'POST', body: JSON.stringify({ logo }) });

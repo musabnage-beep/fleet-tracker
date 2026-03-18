@@ -5,7 +5,15 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
-import TextRecognition, { TextRecognitionScript } from '@react-native-ml-kit/text-recognition';
+let TextRecognition: any = null;
+let TextRecognitionScript: any = {};
+try {
+  const mlkit = require('@react-native-ml-kit/text-recognition');
+  TextRecognition = mlkit.default;
+  TextRecognitionScript = mlkit.TextRecognitionScript || {};
+} catch (e) {
+  console.warn('ML Kit Text Recognition not available');
+}
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -161,6 +169,10 @@ export default function ScanScreen() {
       );
 
       // Run ML Kit text recognition on the image
+      if (!TextRecognition) {
+        console.warn('OCR not available - use manual entry');
+        return;
+      }
       const ocrResult = await TextRecognition.recognize(
         enhanced.uri,
         TextRecognitionScript.LATIN

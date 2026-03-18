@@ -9,9 +9,11 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { getReports, getReportPdf } from '../../services/api';
+import { getReports, getReportPdf, getReportExcel } from '../../services/api';
 import EmptyState from '../../components/EmptyState';
 import { APP_CONFIG } from '../../constants/config';
+import { useAppSettings } from '../../contexts/AppSettingsContext';
+import * as FileSystem from 'expo-file-system';
 
 export default function AdminReportsScreen() {
   const { t, isRTL } = useLanguage();
@@ -22,6 +24,8 @@ export default function AdminReportsScreen() {
   const [detailModal, setDetailModal] = useState(false);
   const [selectedReport, setSelectedReport] = useState<any>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [excelLoading, setExcelLoading] = useState(false);
+  const { appName, companyName } = useAppSettings();
 
   const loadReports = async () => {
     try {
@@ -107,7 +111,7 @@ export default function AdminReportsScreen() {
           </style>
         </head>
         <body>
-          <h1>${t('scanReport')} - ${APP_CONFIG.companyName}</h1>
+          <h1>${t('scanReport')} - ${companyName}</h1>
           <div class="info">
             <div class="info-item"><div class="info-label">${t('shift')}</div><div class="info-value">${session.shift_name}</div></div>
             <div class="info-item"><div class="info-label">${t('date')}</div><div class="info-value">${session.date}</div></div>
@@ -124,7 +128,7 @@ export default function AdminReportsScreen() {
             <tr><th>${t('plateNumber')}</th><th>${t('description')}</th><th>${t('status')}</th></tr>
             ${foundRows}${notInShiftRows}${unknownRows}${notScannedRows}
           </table>
-          <div class="footer">${APP_CONFIG.appName} - ${new Date().toLocaleString(isRTL ? 'ar' : 'en')}</div>
+          <div class="footer">${appName} - ${new Date().toLocaleString(isRTL ? 'ar' : 'en')}</div>
         </body>
         </html>
       `;
@@ -135,6 +139,24 @@ export default function AdminReportsScreen() {
       Alert.alert(t('error'), t('pdfFailed'));
     } finally {
       setPdfLoading(false);
+    }
+  };
+
+  const generateExcel = async () => {
+    if (!selectedReport) return;
+    setExcelLoading(true);
+    try {
+      const data = await getReportExcel(selectedReport.session.id);
+      const filePath = `${FileSystem.cacheDirectory}${data.filename}`;
+      await FileSystem.writeAsStringAsync(filePath, data.data, { encoding: FileSystem.EncodingType.Base64 });
+      await Sharing.shareAsync(filePath, {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: t('downloadExcel') || 'تحميل Excel',
+      });
+    } catch (e: any) {
+      Alert.alert(t('error'), t('excelFailed') || 'فشل إنشاء ملف Excel');
+    } finally {
+      setExcelLoading(false);
     }
   };
 
@@ -229,20 +251,36 @@ export default function AdminReportsScreen() {
                   ))}
                 </ScrollView>
 
-                <TouchableOpacity
-                  style={[styles.pdfButton, { backgroundColor: colors.accent }, pdfLoading && { opacity: 0.7 }]}
-                  onPress={generatePdf}
-                  disabled={pdfLoading}
-                >
-                  {pdfLoading ? (
-                    <ActivityIndicator color={colors.textOnPrimary} />
-                  ) : (
-                    <>
-                      <Ionicons name="download-outline" size={20} color={colors.textOnPrimary} />
-                      <Text style={[styles.pdfButtonText, { color: colors.textOnPrimary }]}>{t('downloadPdf')}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    style={[styles.pdfButton, { backgroundColor: colors.accent, flex: 1 }, pdfLoading && { opacity: 0.7 }]}
+                    onPress={generatePdf}
+                    disabled={pdfLoading}
+                  >
+                    {pdfLoading ? (
+                      <ActivityIndicator color={colors.textOnPrimary} />
+                    ) : (
+                      <>
+                        <Ionicons name="document-outline" size={20} color={colors.textOnPrimary} />
+                        <Text style={[styles.pdfButtonText, { color: colors.textOnPrimary }]}>PDF</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.pdfButton, { backgroundColor: '#28a745', flex: 1 }, excelLoading && { opacity: 0.7 }]}
+                    onPress={generateExcel}
+                    disabled={excelLoading}
+                  >
+                    {excelLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="grid-outline" size={20} color="#fff" />
+                        <Text style={[styles.pdfButtonText, { color: '#fff' }]}>Excel</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </>
             )}
           </View>

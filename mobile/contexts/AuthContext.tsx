@@ -11,7 +11,7 @@ type User = {
 type AuthContextType = {
   user: User;
   loading: boolean;
-  login: (username: string, password: string) => Promise<any>;
+  login: (username: string, password: string, device_id?: string) => Promise<any>;
   logout: () => Promise<void>;
 };
 
@@ -32,8 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (username: string, password: string) => {
-    const u = await apiLogin(username, password);
+  const login = async (username: string, password: string, device_id?: string) => {
+    const u = await apiLogin(username, password, device_id);
     setUser(u);
     return u;
   };

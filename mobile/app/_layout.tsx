@@ -6,6 +6,7 @@ import { I18nManager } from 'react-native';
 import { AuthProvider } from '../contexts/AuthContext';
 import { LanguageProvider } from '../contexts/LanguageContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
+import { AppSettingsProvider } from '../contexts/AppSettingsContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -49,9 +50,11 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <LanguageProvider>
-        <AuthProvider>
-          <InnerLayout />
-        </AuthProvider>
+        <AppSettingsProvider>
+          <AuthProvider>
+            <InnerLayout />
+          </AuthProvider>
+        </AppSettingsProvider>
       </LanguageProvider>
     </ThemeProvider>
   );

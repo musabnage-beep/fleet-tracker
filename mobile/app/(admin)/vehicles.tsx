@@ -7,8 +7,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { getVehicles, createVehicle, updateVehicle, deleteVehicle } from '../../services/api';
+import { getVehicles, createVehicle, updateVehicle, deleteVehicle, importVehiclesFile } from '../../services/api';
 import EmptyState from '../../components/EmptyState';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 
 export default function VehiclesScreen() {
   const { t, isRTL } = useLanguage();
@@ -22,6 +24,7 @@ export default function VehiclesScreen() {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const loadVehicles = async () => {
     try {
@@ -105,6 +108,40 @@ export default function VehiclesScreen() {
     );
   };
 
+  const handleImportExcel = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/csv',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+
+      setImporting(true);
+      const file = result.assets[0];
+
+      // Read file as base64 and send to server for parsing
+      const fileContent = await FileSystem.readAsStringAsync(file.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const res = await importVehiclesFile(fileContent);
+      Alert.alert(
+        t('success') || 'نجح',
+        `${t('added') || 'أضيفت'}: ${res.added}\n${t('duplicatesSkipped') || 'مكررة'}: ${res.duplicates}\n${t('errors') || 'أخطاء'}: ${res.errors}`
+      );
+      await loadVehicles();
+    } catch (e: any) {
+      Alert.alert(t('error'), e.message || t('importFailed') || 'فشل الاستيراد');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const filtered = vehicles.filter(v =>
     v.plate_number.includes(search.toUpperCase()) ||
     (v.description && v.description.includes(search))
@@ -154,6 +191,17 @@ export default function VehiclesScreen() {
             onChangeText={setSearch}
           />
         </View>
+        <TouchableOpacity
+          style={[styles.addButton, { backgroundColor: '#28a745' }]}
+          onPress={handleImportExcel}
+          disabled={importing}
+        >
+          {importing ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Ionicons name="document-text-outline" size={22} color="#fff" />
+          )}
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primary }]} onPress={openAddModal}>
           <Ionicons name="add" size={24} color={colors.textOnPrimary} />
         </TouchableOpacity>
