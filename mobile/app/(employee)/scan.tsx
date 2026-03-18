@@ -102,9 +102,12 @@ export default function ScanScreen() {
   const [processing, setProcessing] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [shiftVehicles, setShiftVehicles] = useState<any[]>([]);
-  const [lastScanTime, setLastScanTime] = useState(0);
+  const lastScanTimeRef = useRef(0);
   const cameraRef = useRef<any>(null);
   const intervalRef = useRef<any>(null);
+  // Use refs so setInterval callback always reads the latest values
+  const sessionIdRef = useRef<number | null>(null);
+  const processingRef = useRef(false);
 
   useFocusEffect(useCallback(() => {
     loadShift();
@@ -131,6 +134,7 @@ export default function ScanScreen() {
     try {
       const { session_id } = await startScan(shiftId);
       setSessionId(session_id);
+      sessionIdRef.current = session_id;
       setScanning(true);
       setResults([]);
       submittedPlatesRef.current.clear();
@@ -145,27 +149,30 @@ export default function ScanScreen() {
   const submittedPlatesRef = useRef<Set<string>>(new Set());
 
   const captureAndProcess = async () => {
-    if (!cameraRef.current || processing || !sessionId) return;
+    // Use refs instead of state to avoid stale closure in setInterval
+    if (!cameraRef.current || processingRef.current || !sessionIdRef.current) return;
 
+    // Throttle: skip if last scan was less than 1.5s ago
     const now = Date.now();
-    if (now - lastScanTime < 1500) return;
-    setLastScanTime(now);
+    if (now - lastScanTimeRef.current < 1500) return;
+    lastScanTimeRef.current = now;
 
     try {
+      processingRef.current = true;
       setProcessing(true);
       // Take photo
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.7,
+        quality: 0.8,
         skipProcessing: true,
       });
 
-      // Enhance image for better OCR
+      // Enhance image for better OCR - higher resolution for plates
       const enhanced = await ImageManipulator.manipulateAsync(
         photo.uri,
         [
-          { resize: { width: 1200 } },
+          { resize: { width: 1600 } },
         ],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+        { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
       );
 
       // Run ML Kit text recognition on the image
@@ -173,28 +180,17 @@ export default function ScanScreen() {
         console.warn('OCR not available - use manual entry');
         return;
       }
-      const ocrResult = await TextRecognition.recognize(
-        enhanced.uri,
-        TextRecognitionScript.LATIN
-      );
+
+      // Try LATIN recognition (picks up digits + Latin letters)
+      const ocrResult = await TextRecognition.recognize(enhanced.uri);
 
       if (ocrResult && ocrResult.text) {
-        // Also try Arabic recognition
         let fullText = ocrResult.text;
-        try {
-          const arabicResult = await TextRecognition.recognize(
-            enhanced.uri,
-            TextRecognitionScript.DEVANAGARI // Closest available for Arabic-like scripts
-          );
-          if (arabicResult?.text) {
-            fullText += '\n' + arabicResult.text;
-          }
-        } catch (_) {
-          // Arabic recognition may not be available, that's ok
-        }
+        console.log('[OCR] Detected text:', fullText);
 
         // Extract plates from OCR text
         const detectedPlates = extractPlates(fullText);
+        console.log('[OCR] Extracted plates:', detectedPlates);
 
         // Submit each new plate
         for (const plate of detectedPlates) {
@@ -206,8 +202,9 @@ export default function ScanScreen() {
       }
 
     } catch (e) {
-      // Silent fail for individual frames
+      console.warn('[OCR] Frame processing error:', e);
     } finally {
+      processingRef.current = false;
       setProcessing(false);
     }
   };
@@ -249,9 +246,10 @@ export default function ScanScreen() {
     setCompleting(true);
     try {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      const report = await completeScan(sessionId);
+      const report = await completeScan(sessionIdRef.current || sessionId);
       setScanning(false);
       setSessionId(null);
+      sessionIdRef.current = null;
 
       const { summary } = report;
       Alert.alert(
