@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ebf5fc"
+      "backgroundColor": "#F0F3F6"
     },
     "ios": {
       "supportsTablet": true,
@@ -20,12 +20,15 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#588593",
+        "backgroundColor": "#6EB1BE",
         "foregroundImage": "./assets/icon.png"
       },
       "package": "com.fleettracker.app",
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
       ]
     },
     "web": {
@@ -40,6 +43,13 @@
         "expo-camera",
         {
           "cameraPermission": "التطبيق يحتاج الكاميرا لمسح لوحات السيارات"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "التطبيق يحتاج الموقع لتسجيل مكان المسح",
+          "locationWhenInUsePermission": "التطبيق يحتاج الموقع لتسجيل مكان المسح"
         }
       ]
     ],
