@@ -95,6 +95,9 @@ export const translations = {
     noShiftToday: 'لا توجد وردية لليوم',
     contactManagerForShift: 'يرجى التواصل مع المدير لإضافة وردية',
     vehicleRequired: 'سيارة مطلوبة',
+    vehiclesInDatabase: 'سيارة في قاعدة البيانات',
+    readyToScan: 'جاهز للمسح',
+    recentScans: 'آخر عمليات المسح',
 
     // Scan
     cameraPermissionRequired: 'إذن الكاميرا مطلوب',
@@ -116,6 +119,16 @@ export const translations = {
     noPlatesScannedYet: 'لم يتم مسح أي لوحة بعد',
     scanCompleted: 'تم إكمال المسح',
     completeScanSubmit: 'إنهاء المسح وإرسال التقرير',
+    plateFoundInDb: 'موجودة في قاعدة البيانات',
+    totalScanned: 'إجمالي الممسوحة',
+    totalMatched: 'إجمالي المطابقة',
+    totalUnknown: 'إجمالي غير المعروفة',
+    scanDuration: 'مدة المسح',
+    startTime: 'وقت البداية',
+    endTime: 'وقت النهاية',
+    location: 'الموقع',
+    locationNotAvailable: 'الموقع غير متوفر',
+    time: 'الوقت',
 
     // Employee Reports
     yourReportsAppearHere: 'ستظهر تقاريرك هنا بعد عمليات المسح',
@@ -240,6 +253,9 @@ export const translations = {
     noShiftToday: 'No shift for today',
     contactManagerForShift: 'Contact the manager to add a shift',
     vehicleRequired: 'vehicle required',
+    vehiclesInDatabase: 'vehicles in database',
+    readyToScan: 'Ready to scan',
+    recentScans: 'Recent Scans',
 
     // Scan
     cameraPermissionRequired: 'Camera Permission Required',
@@ -261,6 +277,16 @@ export const translations = {
     noPlatesScannedYet: 'No plates scanned yet',
     scanCompleted: 'Scan Completed',
     completeScanSubmit: 'Complete Scan & Submit Report',
+    plateFoundInDb: 'Found in database',
+    totalScanned: 'Total Scanned',
+    totalMatched: 'Total Matched',
+    totalUnknown: 'Total Unknown',
+    scanDuration: 'Scan Duration',
+    startTime: 'Start Time',
+    endTime: 'End Time',
+    location: 'Location',
+    locationNotAvailable: 'Location not available',
+    time: 'Time',
 
     // Employee Reports
     yourReportsAppearHere: 'Your reports will appear here after scanning',

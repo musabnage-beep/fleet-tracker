@@ -7,7 +7,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { getTodayShift } from '../../services/api';
+import { getVehicles, getReports } from '../../services/api';
 
 export default function EmployeeDashboard() {
   const { user } = useAuth();
@@ -15,16 +15,19 @@ export default function EmployeeDashboard() {
   const { colors } = useTheme();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
-  const [todayShift, setTodayShift] = useState<any>(null);
-  const [todayVehicles, setTodayVehicles] = useState<any[]>([]);
+  const [vehicleCount, setVehicleCount] = useState(0);
+  const [recentScans, setRecentScans] = useState<any[]>([]);
 
   const today = new Date().toISOString().split('T')[0];
 
   const loadData = async () => {
     try {
-      const data = await getTodayShift();
-      setTodayShift(data.shift);
-      setTodayVehicles(data.vehicles || []);
+      const [vehicles, reports] = await Promise.all([
+        getVehicles(),
+        getReports(),
+      ]);
+      setVehicleCount(Array.isArray(vehicles) ? vehicles.length : 0);
+      setRecentScans(Array.isArray(reports) ? reports.slice(0, 3) : []);
     } catch (e) {}
   };
 
@@ -54,46 +57,50 @@ export default function EmployeeDashboard() {
         </View>
       </View>
 
-      {/* Today's Shift */}
-      {todayShift ? (
-        <>
-          <View style={[styles.shiftCard, { backgroundColor: colors.card, borderRightColor: colors.primary }]}>
-            <View style={styles.shiftHeader}>
-              <Ionicons name="list-circle" size={24} color={colors.primary} />
-              <Text style={[styles.shiftName, { color: colors.textDark }]}>{todayShift.name}</Text>
-            </View>
-            <View style={styles.shiftStat}>
-              <Ionicons name="car" size={18} color={colors.textMedium} />
-              <Text style={[styles.shiftStatText, { color: colors.textMedium }]}>{todayVehicles.length} {t('vehicleRequired')}</Text>
-            </View>
-          </View>
+      {/* Stats */}
+      <View style={[styles.statsRow]}>
+        <View style={[styles.statBox, { backgroundColor: colors.card }]}>
+          <Ionicons name="car" size={28} color={colors.primary} />
+          <Text style={[styles.statNum, { color: colors.textDark }]}>{vehicleCount}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMedium }]}>{t('vehiclesInDatabase')}</Text>
+        </View>
+        <View style={[styles.statBox, { backgroundColor: colors.card }]}>
+          <Ionicons name="scan" size={28} color={colors.success} />
+          <Text style={[styles.statNum, { color: colors.textDark }]}>{recentScans.length}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMedium }]}>{t('recentScans')}</Text>
+        </View>
+      </View>
 
-          {/* Vehicle List */}
-          <Text style={[styles.sectionTitle, { color: colors.textDark }]}>{t('shiftVehicles')}</Text>
-          {todayVehicles.map((v: any) => (
-            <View key={v.id} style={[styles.vehicleItem, { backgroundColor: colors.card }]}>
-              <Ionicons name="car" size={18} color={colors.primary} />
-              <Text style={[styles.vehiclePlate, { color: colors.textDark }]}>{v.plate_number}</Text>
-              {v.description ? <Text style={[styles.vehicleDesc, { color: colors.textMedium }]}>{v.description}</Text> : null}
+      {/* Start Scan Button */}
+      <TouchableOpacity
+        style={[styles.scanButton, { backgroundColor: colors.primary }]}
+        onPress={() => router.push('/(employee)/scan')}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="scan" size={28} color={colors.textOnPrimary} />
+        <Text style={[styles.scanButtonText, { color: colors.textOnPrimary }]}>{t('startScanning')}</Text>
+      </TouchableOpacity>
+
+      {/* Recent Scans */}
+      {recentScans.length > 0 && (
+        <>
+          <Text style={[styles.sectionTitle, { color: colors.textDark }]}>{t('recentScans')}</Text>
+          {recentScans.map((r: any, idx: number) => (
+            <View key={r.id || idx} style={[styles.scanItem, { backgroundColor: colors.card }]}>
+              <View style={styles.scanItemLeft}>
+                <Ionicons name="document-text" size={20} color={colors.primary} />
+                <View>
+                  <Text style={[styles.scanDate, { color: colors.textDark }]}>
+                    {r.started_at ? r.started_at.split('T')[0] : '-'}
+                  </Text>
+                  <Text style={[styles.scanStats, { color: colors.textMedium }]}>
+                    {r.total_scanned || 0} {t('scannedPlate')} | {r.found_count || 0} {t('foundStatus')}
+                  </Text>
+                </View>
+              </View>
             </View>
           ))}
-
-          {/* Start Scan Button */}
-          <TouchableOpacity
-            style={[styles.scanButton, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
-            onPress={() => router.push('/(employee)/scan')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="scan" size={24} color={colors.textOnPrimary} />
-            <Text style={[styles.scanButtonText, { color: colors.textOnPrimary }]}>{t('startScanning')}</Text>
-          </TouchableOpacity>
         </>
-      ) : (
-        <View style={styles.noShift}>
-          <Ionicons name="calendar-clear-outline" size={64} color={colors.secondary} />
-          <Text style={[styles.noShiftTitle, { color: colors.textMedium }]}>{t('noShiftToday')}</Text>
-          <Text style={[styles.noShiftSub, { color: colors.textLight }]}>{t('contactManagerForShift')}</Text>
-        </View>
       )}
     </ScrollView>
   );
@@ -122,52 +129,44 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   dateText: { fontFamily: 'Urbanist', fontSize: 13, fontWeight: '600' },
-  shiftCard: {
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  statBox: {
+    flex: 1,
     borderRadius: 14,
     padding: 18,
-    marginBottom: 20,
-    borderRightWidth: 4,
+    alignItems: 'center',
+    gap: 6,
     elevation: 2,
   },
-  shiftHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  shiftName: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 18 },
-  shiftStat: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  shiftStatText: { fontFamily: 'ExpoArabic-Book', fontSize: 14 },
+  statNum: { fontFamily: 'Urbanist', fontWeight: '900', fontSize: 28 },
+  statLabel: { fontFamily: 'ExpoArabic-Light', fontSize: 12, textAlign: 'center' },
+  scanButton: {
+    borderRadius: 16,
+    height: 64,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+    elevation: 4,
+  },
+  scanButtonText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 20 },
   sectionTitle: {
     fontFamily: 'ExpoArabic-SemiBold',
     fontSize: 16,
     marginBottom: 10,
   },
-  vehicleItem: {
-    borderRadius: 10,
+  scanItem: {
+    borderRadius: 12,
     padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 6,
+    marginBottom: 8,
     elevation: 1,
   },
-  vehiclePlate: { fontFamily: 'Urbanist', fontWeight: '700', fontSize: 16 },
-  vehicleDesc: { fontFamily: 'ExpoArabic-Light', fontSize: 12, flex: 1 },
-  scanButton: {
-    borderRadius: 16,
-    height: 60,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 24,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  scanButtonText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 18 },
-  noShift: {
-    alignItems: 'center',
-    padding: 40,
-    marginTop: 40,
-  },
-  noShiftTitle: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 18, marginTop: 16 },
-  noShiftSub: { fontFamily: 'ExpoArabic-Light', fontSize: 14, marginTop: 6, textAlign: 'center' },
+  scanItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  scanDate: { fontFamily: 'Urbanist', fontWeight: '600', fontSize: 14 },
+  scanStats: { fontFamily: 'ExpoArabic-Light', fontSize: 12 },
 });

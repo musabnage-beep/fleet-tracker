@@ -306,6 +306,12 @@ async function initializeDatabase() {
 
   // Add device_id column if not exists (for existing databases)
   try { await db.exec(`ALTER TABLE users ADD COLUMN device_id TEXT`); } catch(e) {}
+  // Add GPS columns to scan_sessions
+  try { await db.exec(`ALTER TABLE scan_sessions ADD COLUMN latitude REAL`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE scan_sessions ADD COLUMN longitude REAL`); } catch(e) {}
+  // Add GPS columns to scan_results
+  try { await db.exec(`ALTER TABLE scan_results ADD COLUMN latitude REAL`); } catch(e) {}
+  try { await db.exec(`ALTER TABLE scan_results ADD COLUMN longitude REAL`); } catch(e) {}
 
   // Create default users if none exist
   const userCount = await db.prepare('SELECT COUNT(*) as count FROM users').get();

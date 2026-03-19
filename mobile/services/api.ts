@@ -77,10 +77,10 @@ export const deleteShift = (id: number) =>
   request(`/shifts/${id}`, { method: 'DELETE' });
 
 // Scan & Reports
-export const startScan = (shift_id: number) =>
-  request('/reports/scan/start', { method: 'POST', body: JSON.stringify({ shift_id }) });
-export const submitPlate = (session_id: number, plate_number: string) =>
-  request('/reports/scan/plate', { method: 'POST', body: JSON.stringify({ session_id, plate_number }) });
+export const startScan = (options?: { latitude?: number; longitude?: number }) =>
+  request('/reports/scan/start', { method: 'POST', body: JSON.stringify(options || {}) });
+export const submitPlate = (session_id: number, plate_number: string, location?: { latitude: number; longitude: number }) =>
+  request('/reports/scan/plate', { method: 'POST', body: JSON.stringify({ session_id, plate_number, ...location }) });
 export const completeScan = (session_id: number) =>
   request('/reports/scan/complete', { method: 'POST', body: JSON.stringify({ session_id }) });
 export const getReport = (sessionId: number) => request(`/reports/scan/${sessionId}`);

@@ -47,10 +47,7 @@ export default function AdminLayout() {
       <Tabs.Screen
         name="shifts"
         options={{
-          title: t('shifts'),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar-outline" size={size} color={color} />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen

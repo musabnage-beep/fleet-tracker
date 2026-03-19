@@ -4,7 +4,7 @@
 
 export const APP_CONFIG = {
   // اسم التطبيق (يظهر في الشاشات)
-  appName: 'Fleet Tracker',
+  appName: 'CATCH IT',
 
   // اسم الشركة - اتركه فارغ إذا لا تريد عرضه
   companyName: '',

@@ -6,20 +6,19 @@ const { normalizePlate, findVehicleByPlate } = require('../plateUtils');
 
 const router = express.Router();
 
+// Start scan - no shift required
 router.post('/scan/start', authMiddleware, async (req, res) => {
-  const { shift_id } = req.body;
-  if (!shift_id) return res.status(400).json({ error: 'معرف الوردية مطلوب' });
-
+  const { latitude, longitude } = req.body;
   const db = await getDb();
-  const shift = await db.prepare('SELECT * FROM shifts WHERE id = ?').get(shift_id);
-  if (!shift) return res.status(404).json({ error: 'الوردية غير موجودة' });
-
-  const result = await db.prepare('INSERT INTO scan_sessions (shift_id, employee_id) VALUES (?, ?)').run(shift_id, req.user.id);
+  const result = await db.prepare(
+    'INSERT INTO scan_sessions (shift_id, employee_id, latitude, longitude) VALUES (?, ?, ?, ?)'
+  ).run(null, req.user.id, latitude || null, longitude || null);
   res.status(201).json({ session_id: result.lastInsertRowid });
 });
 
+// Submit a scanned plate - simplified: found or unknown
 router.post('/scan/plate', authMiddleware, async (req, res) => {
-  const { session_id, plate_number } = req.body;
+  const { session_id, plate_number, latitude, longitude } = req.body;
   if (!session_id || !plate_number) return res.status(400).json({ error: 'معرف الجلسة ورقم اللوحة مطلوبان' });
 
   const db = await getDb();
@@ -29,28 +28,23 @@ router.post('/scan/plate', authMiddleware, async (req, res) => {
   const normalizedInput = normalizePlate(plate_number);
   const displayPlate = plate_number.trim().toUpperCase();
 
-  // Check duplicates using normalized comparison
+  // Check duplicates
   const existingResults = await db.prepare('SELECT * FROM scan_results WHERE session_id = ?').all(session_id);
   const duplicate = existingResults.find(r => normalizePlate(r.plate_number) === normalizedInput);
   if (duplicate) return res.json({ ...duplicate, duplicate: true });
 
-  // Smart vehicle matching: Arabic "ر ص ب 1527" matches Latin "1527 RSB"
+  // Smart vehicle matching
   const vehicle = await findVehicleByPlate(db, plate_number);
+  const status = vehicle ? 'found' : 'unknown';
 
-  let status;
-  if (vehicle) {
-    const inShift = await db.prepare('SELECT * FROM shift_vehicles WHERE shift_id = ? AND vehicle_id = ?').get(session.shift_id, vehicle.id);
-    status = inShift ? 'found' : 'not_in_shift';
-  } else {
-    status = 'unknown';
-  }
-
-  // Store the plate as the user/OCR sent it, plus the matched vehicle
-  const result = await db.prepare('INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)').run(session_id, displayPlate, vehicle ? vehicle.id : null, status);
+  const result = await db.prepare(
+    'INSERT INTO scan_results (session_id, plate_number, vehicle_id, status, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(session_id, displayPlate, vehicle ? vehicle.id : null, status, latitude || null, longitude || null);
   const scanResult = await db.prepare('SELECT * FROM scan_results WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({ ...scanResult, duplicate: false });
 });
 
+// Complete scan
 router.post('/scan/complete', authMiddleware, async (req, res) => {
   const { session_id } = req.body;
   const db = await getDb();
@@ -65,18 +59,17 @@ router.get('/scan/:sessionId', authMiddleware, async (req, res) => {
   res.json(report);
 });
 
+// List reports
 router.get('/', authMiddleware, async (req, res) => {
   const db = await getDb();
-  const { date, shift_id } = req.query;
+  const { date } = req.query;
 
   let query = `
-    SELECT ss.*, s.date, s.name as shift_name, u.name as employee_name,
+    SELECT ss.*, u.name as employee_name,
       (SELECT COUNT(*) FROM scan_results WHERE session_id = ss.id) as total_scanned,
       (SELECT COUNT(*) FROM scan_results WHERE session_id = ss.id AND status = 'found') as found_count,
-      (SELECT COUNT(*) FROM scan_results WHERE session_id = ss.id AND status = 'not_in_shift') as not_in_shift_count,
       (SELECT COUNT(*) FROM scan_results WHERE session_id = ss.id AND status = 'unknown') as unknown_count
     FROM scan_sessions ss
-    JOIN shifts s ON ss.shift_id = s.id
     JOIN users u ON ss.employee_id = u.id
   `;
 
@@ -88,12 +81,8 @@ router.get('/', authMiddleware, async (req, res) => {
     params.push(req.user.id);
   }
   if (date) {
-    conditions.push('s.date = ?');
+    conditions.push("DATE(ss.started_at) = ?");
     params.push(date);
-  }
-  if (shift_id) {
-    conditions.push('ss.shift_id = ?');
-    params.push(Number(shift_id));
   }
   if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
   query += ' ORDER BY ss.started_at DESC LIMIT 100';
@@ -102,20 +91,18 @@ router.get('/', authMiddleware, async (req, res) => {
   res.json(reports);
 });
 
+// PDF report data
 router.get('/pdf/:sessionId', authMiddleware, adminOnly, async (req, res) => {
   const report = await generateReport(Number(req.params.sessionId));
   if (!report) return res.status(404).json({ error: 'التقرير غير موجود' });
 
   const db = await getDb();
-  const shiftVehicles = await db.prepare(`
-    SELECT v.plate_number, v.description, sv.route_info
-    FROM shift_vehicles sv JOIN vehicles v ON sv.vehicle_id = v.id WHERE sv.shift_id = ?
-  `).all(report.session.shift_id);
-
+  // Get all active vehicles for "not scanned" comparison
+  const allVehicles = await db.prepare('SELECT plate_number, description FROM vehicles WHERE is_active = 1').all();
   const scannedNormalized = new Set(report.results.map(r => normalizePlate(r.plate_number)));
-  const notScanned = shiftVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
+  const notScanned = allVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
 
-  res.json({ ...report, shift_vehicles: shiftVehicles, not_scanned: notScanned });
+  res.json({ ...report, all_vehicles: allVehicles, not_scanned: notScanned });
 });
 
 // Excel export
@@ -125,47 +112,41 @@ router.get('/excel/:sessionId', authMiddleware, adminOnly, async (req, res) => {
     if (!report) return res.status(404).json({ error: 'التقرير غير موجود' });
 
     const db = await getDb();
-    const shiftVehicles = await db.prepare(`
-      SELECT v.plate_number, v.description FROM shift_vehicles sv
-      JOIN vehicles v ON sv.vehicle_id = v.id WHERE sv.shift_id = ?
-    `).all(report.session.shift_id);
-
+    const allVehicles = await db.prepare('SELECT plate_number, description FROM vehicles WHERE is_active = 1').all();
     const scannedNormalized = new Set(report.results.map(r => normalizePlate(r.plate_number)));
-    const notScanned = shiftVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
+    const notScanned = allVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
 
     // Summary sheet
     const summaryData = [
       ['ملخص التقرير / Report Summary'],
-      ['الوردية / Shift', report.session.shift_name],
       ['التاريخ / Date', report.session.date],
       ['الموظف / Employee', report.session.employee_name],
+      ['وقت البداية / Start Time', report.session.started_at],
+      ['وقت النهاية / End Time', report.session.completed_at || '-'],
+      ['المدة / Duration', report.session.duration || '-'],
+      ['الموقع / Location', report.session.latitude ? `${report.session.latitude}, ${report.session.longitude}` : 'غير متوفر'],
       [''],
       ['موجودة / Found', report.summary.found],
-      ['ليست بالوردية / Not in Shift', report.summary.not_in_shift],
       ['غير معروفة / Unknown', report.summary.unknown],
       ['غير ممسوحة / Not Scanned', notScanned.length],
       ['إجمالي الممسوحة / Total Scanned', report.summary.total_scanned],
-      ['إجمالي بالوردية / Total in Shift', report.summary.total_in_shift],
+      ['إجمالي في القاعدة / Total in Database', report.summary.total_in_database],
     ];
 
     // Details sheet
-    const detailsHeader = ['رقم اللوحة / Plate', 'الوصف / Description', 'الحالة / Status', 'التفاصيل / Details'];
+    const detailsHeader = ['رقم اللوحة / Plate', 'الوصف / Description', 'الحالة / Status', 'الوقت / Time', 'الموقع / Location'];
     const detailsData = [detailsHeader];
     for (const r of report.results) {
-      const statusAr = r.status === 'found' ? 'موجودة' : r.status === 'not_in_shift' ? 'ليست بالوردية' : 'غير معروفة';
-      const detail = r.status === 'found'
-        ? `السيارة ${r.plate_number} متواجدة`
-        : r.status === 'not_in_shift'
-        ? `السيارة ${r.plate_number} ليست ضمن الوردية`
-        : `السيارة ${r.plate_number} غير معروفة`;
-      detailsData.push([r.plate_number, r.vehicle_description || '-', statusAr, detail]);
+      const statusAr = r.status === 'found' ? 'موجودة' : 'غير معروفة';
+      const loc = r.latitude ? `${r.latitude}, ${r.longitude}` : '-';
+      detailsData.push([r.plate_number, r.vehicle_description || '-', statusAr, r.scanned_at || '-', loc]);
     }
 
     // Not scanned sheet
-    const notScannedHeader = ['رقم اللوحة / Plate', 'الوصف / Description', 'الحالة / Status'];
+    const notScannedHeader = ['رقم اللوحة / Plate', 'الوصف / Description'];
     const notScannedData = [notScannedHeader];
     for (const v of notScanned) {
-      notScannedData.push([v.plate_number, v.description || '-', `السيارة ${v.plate_number} غير متواجدة`]);
+      notScannedData.push([v.plate_number, v.description || '-']);
     }
 
     const wb = XLSX.utils.book_new();
@@ -177,7 +158,8 @@ router.get('/excel/:sessionId', authMiddleware, adminOnly, async (req, res) => {
     XLSX.utils.book_append_sheet(wb, ws3, 'غير ممسوحة');
 
     const buffer = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
-    res.json({ data: buffer, filename: `report_${report.session.date}_${report.session.shift_name}.xlsx` });
+    const dateStr = report.session.date || new Date().toISOString().split('T')[0];
+    res.json({ data: buffer, filename: `report_${dateStr}.xlsx` });
   } catch (e) {
     console.error('Excel export error:', e);
     res.status(500).json({ error: 'فشل إنشاء ملف Excel: ' + (e.message || 'خطأ غير معروف') });
@@ -187,14 +169,27 @@ router.get('/excel/:sessionId', authMiddleware, adminOnly, async (req, res) => {
 async function generateReport(sessionId) {
   const db = await getDb();
   const session = await db.prepare(`
-    SELECT ss.*, s.date, s.name as shift_name, u.name as employee_name
+    SELECT ss.*, u.name as employee_name
     FROM scan_sessions ss
-    JOIN shifts s ON ss.shift_id = s.id
     JOIN users u ON ss.employee_id = u.id
     WHERE ss.id = ?
   `).get(sessionId);
 
   if (!session) return null;
+
+  // Add date from started_at
+  session.date = session.started_at ? session.started_at.split('T')[0] : new Date().toISOString().split('T')[0];
+
+  // Calculate duration
+  if (session.started_at && session.completed_at) {
+    const start = new Date(session.started_at);
+    const end = new Date(session.completed_at);
+    const diffSec = Math.floor((end - start) / 1000);
+    const mins = Math.floor(diffSec / 60);
+    const secs = diffSec % 60;
+    session.duration = mins > 0 ? `${mins} دقيقة ${secs} ثانية` : `${secs} ثانية`;
+    session.duration_seconds = diffSec;
+  }
 
   const results = await db.prepare(`
     SELECT sr.*, v.description as vehicle_description
@@ -202,13 +197,12 @@ async function generateReport(sessionId) {
     WHERE sr.session_id = ? ORDER BY sr.scanned_at ASC
   `).all(sessionId);
 
-  const shiftVehicleCount = await db.prepare('SELECT COUNT(*) as count FROM shift_vehicles WHERE shift_id = ?').get(session.shift_id);
+  const totalInDb = await db.prepare('SELECT COUNT(*) as count FROM vehicles WHERE is_active = 1').get();
 
   const summary = {
-    total_in_shift: shiftVehicleCount.count,
+    total_in_database: Number(totalInDb.count),
     total_scanned: results.length,
     found: results.filter(r => r.status === 'found').length,
-    not_in_shift: results.filter(r => r.status === 'not_in_shift').length,
     unknown: results.filter(r => r.status === 'unknown').length,
   };
 

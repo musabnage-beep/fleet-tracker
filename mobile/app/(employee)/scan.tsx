@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, FlatList,
-  ActivityIndicator, Vibration, Dimensions,
+  ActivityIndicator, Vibration, Dimensions, Animated, Modal,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Location from 'expo-location';
 let TextRecognition: any = null;
 let TextRecognitionScript: any = {};
 try {
@@ -18,7 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { getTodayShift, startScan, submitPlate, completeScan } from '../../services/api';
+import { startScan, submitPlate, completeScan, getVehicles } from '../../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -40,17 +41,11 @@ const VALID_SAUDI_LETTERS = new Set([
 
 // Strict plate patterns - must have BOTH letters and digits
 const PLATE_PATTERNS = [
-  // Saudi format: 1-3 Arabic letters + space + 1-4 digits
   /[\u0621-\u064A]{1,3}\s+\d{1,4}/g,
-  // Saudi format: 1-4 digits + space + 1-3 Arabic letters
   /\d{1,4}\s+[\u0621-\u064A]{1,3}/g,
-  // Latin format: 1-3 letters + space/dash + 3-4 digits
   /\b[A-Z]{1,3}[\s\-]+\d{3,4}\b/gi,
-  // Latin format: 3-4 digits + space/dash + 1-3 letters
   /\b\d{3,4}[\s\-]+[A-Z]{1,3}\b/gi,
-  // Compact: letters immediately followed by digits (e.g. ABC1234)
   /\b[A-Z]{1,3}\d{3,4}\b/gi,
-  // Compact: digits immediately followed by letters
   /\b\d{3,4}[A-Z]{1,3}\b/gi,
 ];
 
@@ -60,34 +55,22 @@ const OCR_CORRECTIONS: Record<string, string> = {
   'o': '0', 'i': '1', '|': '1', 'Z': '2',
 };
 
-// Fix common OCR misreads in plate text
 function fixOcrMisreads(text: string): string {
-  // Split into letter and digit parts
   const parts = text.split(/(\d+)/);
   let fixed = '';
   for (const part of parts) {
     if (/^\d+$/.test(part)) {
       fixed += part;
     } else {
-      // In the letter portion, fix O->0 only if surrounded by digits
-      let fixedPart = '';
-      for (const ch of part) {
-        // 'O' in letter context stays 'O', but 'I' and 'l' in digit context become '1'
-        fixedPart += ch;
-      }
-      fixed += fixedPart;
+      fixed += part;
     }
   }
-
-  // Fix digits that look like letters: in digit sections, O->0, I->1
   fixed = fixed.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
   fixed = fixed.replace(/(\d)I/g, '$11').replace(/I(\d)/g, '1$1');
   fixed = fixed.replace(/(\d)l/g, '$11').replace(/l(\d)/g, '1$1');
-
   return fixed;
 }
 
-// Validate if letters are valid Saudi plate letters
 function isValidSaudiPlate(letters: string): boolean {
   for (const ch of letters.toUpperCase()) {
     if (ch === ' ' || ch === '-') continue;
@@ -110,7 +93,6 @@ function extractPlates(text: string): string[] {
       if (matches) {
         for (const m of matches) {
           const cleaned = m.replace(/[\s\-]+/g, ' ').trim().toUpperCase();
-
           if (cleaned.length < 4 || cleaned.length > 10) continue;
           if (!/\d/.test(cleaned)) continue;
           if (!/[A-Z\u0621-\u064A]/.test(cleaned)) continue;
@@ -121,7 +103,6 @@ function extractPlates(text: string): string[] {
           const digitCount = (cleaned.match(/\d/g) || []).length;
           if (digitCount < 2) continue;
 
-          // Validate Saudi plate letters
           if (/[A-Z]/.test(justLetters) && !isValidSaudiPlate(justLetters)) continue;
 
           plates.add(cleaned);
@@ -132,69 +113,85 @@ function extractPlates(text: string): string[] {
   return Array.from(plates);
 }
 
-// Confidence-based plate detection: track candidates across multiple frames
 type PlateCandidate = { plate: string; count: number; firstSeen: number; };
-const CONFIDENCE_THRESHOLD = 2; // Need to see plate in 2+ frames to confirm
+const CONFIDENCE_THRESHOLD = 2;
 
 export default function ScanScreen() {
   const { t, isRTL } = useLanguage();
   const { colors } = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
   const [sessionId, setSessionId] = useState<number | null>(null);
-  const [shiftId, setShiftId] = useState<number | null>(null);
   const [scanning, setScanning] = useState(false);
   const [torch, setTorch] = useState(false);
   const [results, setResults] = useState<any[]>([]);
   const [processing, setProcessing] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [shiftVehicles, setShiftVehicles] = useState<any[]>([]);
+  const [vehicleCount, setVehicleCount] = useState(0);
   const lastScanTimeRef = useRef(0);
   const cameraRef = useRef<any>(null);
   const intervalRef = useRef<any>(null);
-  // Use refs so setInterval callback always reads the latest values
   const sessionIdRef = useRef<number | null>(null);
   const processingRef = useRef(false);
+  const locationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+
+  // Match notification state
+  const [matchNotification, setMatchNotification] = useState<{ plate: string; visible: boolean } | null>(null);
+  const matchAnim = useRef(new Animated.Value(0)).current;
+
+  // Summary modal state
+  const [showSummary, setShowSummary] = useState(false);
+  const [scanSummary, setScanSummary] = useState<any>(null);
 
   useFocusEffect(useCallback(() => {
-    loadShift();
+    loadVehicleCount();
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []));
 
-  const loadShift = async () => {
+  const loadVehicleCount = async () => {
     try {
-      const data = await getTodayShift();
-      if (data.shift) {
-        setShiftId(data.shift.id);
-        setShiftVehicles(data.vehicles || []);
+      const data = await getVehicles();
+      setVehicleCount(Array.isArray(data) ? data.length : 0);
+    } catch (e) {}
+  };
+
+  const getLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        locationRef.current = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       }
     } catch (e) {}
   };
 
+  const showMatchBanner = (plate: string) => {
+    setMatchNotification({ plate, visible: true });
+    Animated.sequence([
+      Animated.timing(matchAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(matchAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start(() => setMatchNotification(null));
+  };
+
   const handleStartScan = async () => {
-    if (!shiftId) {
-      Alert.alert(t('alert'), t('noShiftToday'));
-      return;
-    }
     try {
-      const { session_id } = await startScan(shiftId);
+      await getLocation();
+      const { session_id } = await startScan(locationRef.current || undefined);
       setSessionId(session_id);
       sessionIdRef.current = session_id;
       setScanning(true);
       setResults([]);
       submittedPlatesRef.current.clear();
       plateCandidatesRef.current.clear();
-      // Start auto-scanning - faster interval for confidence tracking
       intervalRef.current = setInterval(captureAndProcess, 1500);
     } catch (e: any) {
       Alert.alert(t('error'), e.message);
     }
   };
 
-  // Track already-submitted plates to avoid duplicate OCR submissions
   const submittedPlatesRef = useRef<Set<string>>(new Set());
-  // Confidence tracking: plates must appear in multiple frames
   const plateCandidatesRef = useRef<Map<string, PlateCandidate>>(new Map());
 
   const captureAndProcess = async () => {
@@ -211,6 +208,7 @@ export default function ScanScreen() {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.9,
         skipProcessing: true,
+        shutterSound: false,
       });
 
       if (!TextRecognition) {
@@ -218,10 +216,9 @@ export default function ScanScreen() {
         return;
       }
 
-      // Multi-pass OCR: full image + cropped plate region
       const allPlates: string[] = [];
 
-      // Pass 1: Full image at high resolution
+      // Pass 1: Full image
       const fullEnhanced = await ImageManipulator.manipulateAsync(
         photo.uri,
         [{ resize: { width: 2000 } }],
@@ -229,12 +226,10 @@ export default function ScanScreen() {
       );
       const fullResult = await TextRecognition.recognize(fullEnhanced.uri);
       if (fullResult?.text) {
-        console.log('[OCR-Full] Text:', fullResult.text);
         allPlates.push(...extractPlates(fullResult.text));
       }
 
-      // Pass 2: Crop to center plate region (where scan frame is)
-      // The scan frame is roughly in center-bottom 40% area
+      // Pass 2: Cropped center
       const cropEnhanced = await ImageManipulator.manipulateAsync(
         photo.uri,
         [
@@ -250,22 +245,18 @@ export default function ScanScreen() {
       );
       const cropResult = await TextRecognition.recognize(cropEnhanced.uri);
       if (cropResult?.text) {
-        console.log('[OCR-Crop] Text:', cropResult.text);
         allPlates.push(...extractPlates(cropResult.text));
       }
 
-      // Deduplicate plates from both passes
       const uniquePlates = [...new Set(allPlates)];
-      console.log('[OCR] All candidates:', uniquePlates);
 
-      // Confidence tracking: only submit if seen in 2+ frames
+      // Confidence tracking
       for (const plate of uniquePlates) {
         if (submittedPlatesRef.current.has(plate)) continue;
 
         const existing = plateCandidatesRef.current.get(plate);
         if (existing) {
           existing.count++;
-          // Plate confirmed in multiple frames - submit it!
           if (existing.count >= CONFIDENCE_THRESHOLD) {
             submittedPlatesRef.current.add(plate);
             plateCandidatesRef.current.delete(plate);
@@ -278,7 +269,7 @@ export default function ScanScreen() {
         }
       }
 
-      // Clean old candidates (older than 10 seconds)
+      // Clean old candidates
       for (const [key, candidate] of plateCandidatesRef.current) {
         if (now - candidate.firstSeen > 10000) {
           plateCandidatesRef.current.delete(key);
@@ -293,31 +284,21 @@ export default function ScanScreen() {
     }
   };
 
-  const handleManualEntry = () => {
-    Alert.prompt(
-      t('manualPlateEntry'),
-      t('enterPlateYouSee'),
-      async (text) => {
-        if (text && text.trim() && sessionId) {
-          await submitPlateNumber(text.trim().toUpperCase());
-        }
-      },
-      'plain-text',
-      '',
-      'default'
-    );
-  };
-
-  // Manual plate entry with TextInput (cross-platform)
   const [manualPlate, setManualPlate] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
   const submitPlateNumber = async (plate: string) => {
-    if (!sessionId || !plate) return;
+    if (!sessionId && !sessionIdRef.current || !plate) return;
     try {
-      const result = await submitPlate(sessionId, plate);
+      const sid = sessionIdRef.current || sessionId;
+      const result = await submitPlate(sid!, plate, locationRef.current || undefined);
       if (!result.duplicate) {
-        Vibration.vibrate(result.status === 'found' ? 100 : [0, 100, 50, 100]);
+        if (result.status === 'found') {
+          Vibration.vibrate(100);
+          showMatchBanner(plate);
+        } else {
+          Vibration.vibrate([0, 100, 50, 100]);
+        }
         setResults(prev => [result, ...prev]);
       }
     } catch (e: any) {
@@ -326,21 +307,24 @@ export default function ScanScreen() {
   };
 
   const handleCompleteScan = async () => {
-    if (!sessionId) return;
+    if (!sessionId && !sessionIdRef.current) return;
     setCompleting(true);
     try {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      const report = await completeScan(sessionIdRef.current || sessionId);
+      const sid = sessionIdRef.current || sessionId;
+      const report = await completeScan(sid!);
       setScanning(false);
       setSessionId(null);
       sessionIdRef.current = null;
 
-      const { summary } = report;
-      Alert.alert(
-        t('scanCompleted'),
-        `${t('foundStatus')}: ${summary.found}\n${t('notInShiftStatus')}: ${summary.not_in_shift}\n${t('unknownStatus')}: ${summary.unknown}\n${t('total')}: ${summary.total_scanned} ${t('of')} ${summary.total_in_shift}`,
-        [{ text: t('ok') }]
-      );
+      const { summary, session } = report;
+      setScanSummary({
+        total: summary.total_scanned,
+        found: summary.found,
+        unknown: summary.unknown,
+        duration: session.duration || '-',
+      });
+      setShowSummary(true);
     } catch (e: any) {
       Alert.alert(t('error'), e.message);
     } finally {
@@ -368,26 +352,64 @@ export default function ScanScreen() {
         <Ionicons name="scan-circle-outline" size={80} color={colors.primary} />
         <Text style={[styles.startTitle, { color: colors.textDark }]}>{t('scanVehiclePlates')}</Text>
         <Text style={[styles.startSub, { color: colors.textMedium }]}>
-          {shiftId
-            ? `${t('todayShiftContains')} ${shiftVehicles.length} ${t('vehicle')}`
-            : t('noShiftToday')}
+          {vehicleCount > 0
+            ? `${vehicleCount} ${t('vehiclesInDatabase')}`
+            : t('readyToScan')}
         </Text>
         <TouchableOpacity
-          style={[styles.startBtn, { backgroundColor: colors.primary }, !shiftId && { backgroundColor: colors.textLight }]}
+          style={[styles.startBtn, { backgroundColor: colors.primary }]}
           onPress={handleStartScan}
-          disabled={!shiftId}
         >
           <Ionicons name="play" size={24} color={colors.textOnPrimary} />
           <Text style={[styles.startBtnText, { color: colors.textOnPrimary }]}>{t('startScan')}</Text>
         </TouchableOpacity>
+
+        {/* Summary Modal */}
+        <Modal visible={showSummary} transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
+              <Ionicons name="checkmark-circle" size={56} color={colors.success} />
+              <Text style={[styles.summaryTitle, { color: colors.textDark }]}>{t('scanCompleted')}</Text>
+
+              <View style={styles.summaryRow}>
+                <View style={[styles.summaryBox, { backgroundColor: colors.surface }]}>
+                  <Text style={[styles.summaryNum, { color: colors.primary }]}>{scanSummary?.total || 0}</Text>
+                  <Text style={[styles.summaryLabel, { color: colors.textMedium }]}>{t('totalScanned')}</Text>
+                </View>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <View style={[styles.summaryBox, { backgroundColor: colors.successLight }]}>
+                  <Text style={[styles.summaryNum, { color: colors.success }]}>{scanSummary?.found || 0}</Text>
+                  <Text style={[styles.summaryLabel, { color: colors.success }]}>{t('foundStatus')}</Text>
+                </View>
+                <View style={[styles.summaryBox, { backgroundColor: colors.dangerLight }]}>
+                  <Text style={[styles.summaryNum, { color: colors.danger }]}>{scanSummary?.unknown || 0}</Text>
+                  <Text style={[styles.summaryLabel, { color: colors.danger }]}>{t('unknownStatus')}</Text>
+                </View>
+              </View>
+
+              <View style={[styles.summaryDuration, { backgroundColor: colors.surface }]}>
+                <Ionicons name="time-outline" size={18} color={colors.textMedium} />
+                <Text style={[styles.summaryDurationText, { color: colors.textMedium }]}>{scanSummary?.duration}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.summaryBtn, { backgroundColor: colors.primary }]}
+                onPress={() => setShowSummary(false)}
+              >
+                <Text style={[styles.summaryBtnText, { color: colors.textOnPrimary }]}>{t('ok')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
 
   const getStatusStyle = (status: string) => {
-    if (status === 'found') return { bg: colors.successLight, color: colors.success, text: `${t('foundStatus')}` };
-    if (status === 'not_in_shift') return { bg: colors.warningLight, color: colors.warning, text: `${t('notInShiftStatus')}` };
-    return { bg: colors.dangerLight, color: colors.danger, text: `${t('unknownStatus')}` };
+    if (status === 'found') return { bg: colors.successLight, color: colors.success, text: t('foundStatus') };
+    return { bg: colors.dangerLight, color: colors.danger, text: t('unknownStatus') };
   };
 
   return (
@@ -402,17 +424,33 @@ export default function ScanScreen() {
         >
           {/* Overlay */}
           <View style={styles.overlay}>
+            {/* Match Notification Banner */}
+            {matchNotification?.visible && (
+              <Animated.View style={[
+                styles.matchBanner,
+                { backgroundColor: colors.success, opacity: matchAnim,
+                  transform: [{ translateY: matchAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 0] }) }]
+                }
+              ]}>
+                <Ionicons name="checkmark-circle" size={28} color="#FFFFFF" />
+                <View style={styles.matchTextContainer}>
+                  <Text style={styles.matchPlate}>{matchNotification.plate}</Text>
+                  <Text style={styles.matchText}>{t('plateFoundInDb')}</Text>
+                </View>
+              </Animated.View>
+            )}
+
             {/* Top controls */}
             <View style={styles.topControls}>
               <TouchableOpacity
                 style={[styles.controlBtn, torch && { backgroundColor: colors.accent }]}
                 onPress={() => setTorch(!torch)}
               >
-                <Ionicons name={torch ? 'flash' : 'flash-off'} size={22} color="#ffffff" />
+                <Ionicons name={torch ? 'flash' : 'flash-off'} size={22} color="#FFFFFF" />
               </TouchableOpacity>
               {processing && (
                 <View style={styles.processingBadge}>
-                  <ActivityIndicator size="small" color="#ffffff" />
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                   <Text style={styles.processingText}>{t('scanning')}</Text>
                 </View>
               )}
@@ -420,10 +458,10 @@ export default function ScanScreen() {
 
             {/* Scan frame */}
             <View style={styles.scanFrame}>
-              <View style={[styles.corner, styles.topRight, { borderColor: colors.accent }]} />
-              <View style={[styles.corner, styles.topLeft, { borderColor: colors.accent }]} />
-              <View style={[styles.corner, styles.bottomRight, { borderColor: colors.accent }]} />
-              <View style={[styles.corner, styles.bottomLeft, { borderColor: colors.accent }]} />
+              <View style={[styles.corner, styles.topRight, { borderColor: colors.success }]} />
+              <View style={[styles.corner, styles.topLeft, { borderColor: colors.success }]} />
+              <View style={[styles.corner, styles.bottomRight, { borderColor: colors.success }]} />
+              <View style={[styles.corner, styles.bottomLeft, { borderColor: colors.success }]} />
               <Text style={styles.scanHint}>{t('pointCameraAtPlate')}</Text>
             </View>
           </View>
@@ -518,7 +556,6 @@ export default function ScanScreen() {
   );
 }
 
-// Simple TextInput component to avoid import issues
 function TextInputComponent({ value, onChangeText, placeholder, onSubmit, colors, isRTL }: any) {
   const { TextInput } = require('react-native');
   return (
@@ -583,6 +620,32 @@ const styles = StyleSheet.create({
   cameraContainer: { height: '40%' },
   camera: { flex: 1 },
   overlay: { flex: 1, justifyContent: 'space-between' },
+  // Match notification banner
+  matchBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    paddingTop: 8,
+    gap: 12,
+  },
+  matchTextContainer: { flex: 1 },
+  matchPlate: {
+    fontFamily: 'Urbanist',
+    fontWeight: '900',
+    fontSize: 18,
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
+  matchText: {
+    fontFamily: 'ExpoArabic-Light',
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
   topControls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -607,7 +670,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
-  processingText: { fontFamily: 'ExpoArabic-Light', fontSize: 12, color: '#ffffff' },
+  processingText: { fontFamily: 'ExpoArabic-Light', fontSize: 12, color: '#FFFFFF' },
   scanFrame: {
     alignSelf: 'center',
     width: SCREEN_WIDTH * 0.7,
@@ -628,7 +691,7 @@ const styles = StyleSheet.create({
   scanHint: {
     fontFamily: 'ExpoArabic-Light',
     fontSize: 13,
-    color: '#ffffff',
+    color: '#FFFFFF',
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -670,9 +733,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  resultsContainer: {
-    flex: 1,
-  },
+  resultsContainer: { flex: 1 },
   resultItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -709,4 +770,48 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   completeBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 16 },
+  // Summary Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  summaryCard: {
+    width: '100%',
+    borderRadius: 20,
+    padding: 28,
+    alignItems: 'center',
+    gap: 16,
+    elevation: 8,
+  },
+  summaryTitle: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 22 },
+  summaryRow: { flexDirection: 'row', gap: 12, width: '100%' },
+  summaryBox: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+  },
+  summaryNum: { fontFamily: 'Urbanist', fontWeight: '900', fontSize: 32 },
+  summaryLabel: { fontFamily: 'ExpoArabic-Light', fontSize: 13, marginTop: 4 },
+  summaryDuration: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  summaryDurationText: { fontFamily: 'ExpoArabic-Book', fontSize: 14 },
+  summaryBtn: {
+    width: '100%',
+    borderRadius: 14,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  summaryBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 16 },
 });
