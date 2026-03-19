@@ -10,9 +10,18 @@ const router = express.Router();
 router.post('/scan/start', authMiddleware, async (req, res) => {
   const { latitude, longitude } = req.body;
   const db = await getDb();
+
+  // Ensure a default shift exists for shiftless scans (shift_id NOT NULL in legacy schema)
+  let defaultShift = await db.prepare("SELECT id FROM shifts WHERE name = '__default__'").get();
+  if (!defaultShift) {
+    const today = new Date().toISOString().split('T')[0];
+    const r = await db.prepare("INSERT INTO shifts (date, name, created_by) VALUES (?, ?, ?)").run(today, '__default__', req.user.id);
+    defaultShift = { id: r.lastInsertRowid };
+  }
+
   const result = await db.prepare(
     'INSERT INTO scan_sessions (shift_id, employee_id, latitude, longitude) VALUES (?, ?, ?, ?)'
-  ).run(null, req.user.id, latitude || null, longitude || null);
+  ).run(defaultShift.id, req.user.id, latitude || null, longitude || null);
   res.status(201).json({ session_id: result.lastInsertRowid });
 });
 
