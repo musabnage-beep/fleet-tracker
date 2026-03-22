@@ -25,6 +25,85 @@ router.post('/scan/start', authMiddleware, async (req, res) => {
   res.status(201).json({ session_id: result.lastInsertRowid });
 });
 
+// Plate Recognizer ANPR API proxy
+router.post('/scan/plate-recognize', authMiddleware, async (req, res) => {
+  const { session_id, image } = req.body;
+  if (!session_id || !image) return res.status(400).json({ error: 'session_id and image are required' });
+
+  const db = await getDb();
+  const session = await db.prepare('SELECT * FROM scan_sessions WHERE id = ?').get(session_id);
+  if (!session) return res.status(404).json({ error: 'Scan session not found' });
+
+  // Get API token from settings
+  const tokenRow = await db.prepare('SELECT value FROM app_settings WHERE key = ?').get('plateRecognizerToken');
+  if (!tokenRow || !tokenRow.value) return res.status(400).json({ error: 'Plate Recognizer API token not configured. Set it in admin settings.' });
+
+  try {
+    // Call Plate Recognizer API
+    const FormData = require('form-data');
+    const formData = new FormData();
+    formData.append('upload', Buffer.from(image, 'base64'), { filename: 'plate.jpg', contentType: 'image/jpeg' });
+    formData.append('regions', 'sa');
+
+    const fetch = require('node-fetch');
+    const apiResponse = await fetch('https://api.platerecognizer.com/v1/plate-reader/', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${tokenRow.value}`,
+        ...formData.getHeaders(),
+      },
+      body: formData,
+    });
+
+    if (!apiResponse.ok) {
+      const errText = await apiResponse.text();
+      console.error('Plate Recognizer API error:', apiResponse.status, errText);
+      return res.status(apiResponse.status).json({ error: `ANPR API error: ${apiResponse.status}` });
+    }
+
+    const apiData = await apiResponse.json();
+    const results = [];
+
+    // Process each detected plate
+    for (const result of (apiData.results || [])) {
+      const plateText = normalizePlate(result.plate.toUpperCase());
+      const confidence = result.score;
+
+      if (!plateText || plateText.length < 3) continue;
+
+      // Check if already submitted in this session
+      const existing = await db.prepare('SELECT * FROM scan_results WHERE session_id = ? AND plate_number = ?').get(session_id, plateText);
+      if (existing) {
+        results.push({ ...existing, duplicate: true, confidence });
+        continue;
+      }
+
+      // Match against vehicles
+      const vehicle = await db.prepare('SELECT * FROM vehicles WHERE plate_number = ? AND is_active = 1').get(plateText);
+      let status;
+      if (vehicle) {
+        const inShift = await db.prepare('SELECT * FROM shift_vehicles WHERE shift_id = ? AND vehicle_id = ?').get(session.shift_id, vehicle.id);
+        status = inShift ? 'found' : 'not_in_shift';
+      } else {
+        status = 'unknown';
+      }
+
+      const insertResult = await db.prepare('INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)').run(session_id, plateText, vehicle ? vehicle.id : null, status);
+      const scanResult = await db.prepare('SELECT * FROM scan_results WHERE id = ?').get(insertResult.lastInsertRowid);
+      results.push({ ...scanResult, duplicate: false, confidence });
+    }
+
+    res.json({
+      results,
+      processing_time: apiData.processing_time,
+      total_detected: (apiData.results || []).length,
+    });
+  } catch (e) {
+    console.error('Plate recognition error:', e);
+    res.status(500).json({ error: 'Failed to process plate recognition: ' + (e.message || 'Unknown error') });
+  }
+});
+
 // Submit a scanned plate - simplified: found or unknown
 router.post('/scan/plate', authMiddleware, async (req, res) => {
   const { session_id, plate_number, latitude, longitude } = req.body;

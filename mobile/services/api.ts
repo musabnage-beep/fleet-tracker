@@ -83,6 +83,8 @@ export const submitPlate = (session_id: number, plate_number: string, location?:
   request('/reports/scan/plate', { method: 'POST', body: JSON.stringify({ session_id, plate_number, ...location }) });
 export const completeScan = (session_id: number) =>
   request('/reports/scan/complete', { method: 'POST', body: JSON.stringify({ session_id }) });
+export const recognizePlate = (session_id: number, image: string) =>
+  request('/reports/scan/plate-recognize', { method: 'POST', body: JSON.stringify({ session_id, image }) });
 export const getReport = (sessionId: number) => request(`/reports/scan/${sessionId}`);
 export const getReports = (date?: string) =>
   request(`/reports${date ? `?date=${date}` : ''}`);
@@ -106,3 +108,8 @@ export const updateAppSettings = (data: { appName?: string; companyName?: string
   request('/settings', { method: 'PUT', body: JSON.stringify(data) });
 export const uploadLogo = (logo: string) =>
   request('/settings/logo', { method: 'POST', body: JSON.stringify({ logo }) });
+
+// ANPR Settings
+export const getAnprSettings = () => request('/settings/anpr');
+export const updateAnprToken = (plateRecognizerToken: string) =>
+  request('/settings/anpr', { method: 'PUT', body: JSON.stringify({ plateRecognizerToken }) });

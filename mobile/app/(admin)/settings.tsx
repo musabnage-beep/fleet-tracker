@@ -10,7 +10,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { APP_CONFIG } from '../../constants/config';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppSettings } from '../../contexts/AppSettingsContext';
-import { getUsers, createUser, deleteUser, resetUserDevice, updateAppSettings, uploadLogo } from '../../services/api';
+import { getUsers, createUser, deleteUser, resetUserDevice, updateAppSettings, uploadLogo, getAnprSettings, updateAnprToken } from '../../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'react-native';
 
@@ -31,6 +31,36 @@ export default function SettingsScreen() {
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'employee'>('employee');
   const [saving, setSaving] = useState(false);
+  const [anprToken, setAnprToken] = useState('');
+  const [anprHasToken, setAnprHasToken] = useState(false);
+  const [anprModal, setAnprModal] = useState(false);
+  const [savingAnpr, setSavingAnpr] = useState(false);
+
+  const loadAnprSettings = async () => {
+    try {
+      const data = await getAnprSettings();
+      setAnprHasToken(data.hasToken);
+    } catch (e) {}
+  };
+
+  const handleSaveAnprToken = async () => {
+    if (!anprToken.trim()) {
+      Alert.alert(t('alert'), t('allFieldsRequired'));
+      return;
+    }
+    setSavingAnpr(true);
+    try {
+      await updateAnprToken(anprToken.trim());
+      setAnprHasToken(true);
+      setAnprModal(false);
+      setAnprToken('');
+      Alert.alert(t('success'), t('anprTokenSaved'));
+    } catch (e: any) {
+      Alert.alert(t('error'), e.message);
+    } finally {
+      setSavingAnpr(false);
+    }
+  };
 
   const loadUsers = async () => {
     try {
@@ -39,7 +69,7 @@ export default function SettingsScreen() {
     } catch (e) {}
   };
 
-  useFocusEffect(useCallback(() => { loadUsers(); }, []));
+  useFocusEffect(useCallback(() => { loadUsers(); loadAnprSettings(); }, []));
 
   const handleLogout = () => {
     Alert.alert(t('logout'), t('logoutConfirm'), [
@@ -209,6 +239,29 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* ANPR Settings */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textDark, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('anprSettings')}</Text>
+        <View style={[styles.infoCard, { backgroundColor: colors.card }]}>
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: colors.textMedium }]}>{t('anprStatus')}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: anprHasToken ? colors.success : colors.danger }} />
+              <Text style={[styles.infoValue, { color: anprHasToken ? colors.success : colors.danger }]}>
+                {anprHasToken ? t('anprConnected') : t('anprNotConfigured')}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[styles.addBtn, { backgroundColor: colors.primary, marginTop: 12, alignSelf: 'flex-start' }]}
+            onPress={() => setAnprModal(true)}
+          >
+            <Ionicons name="key-outline" size={16} color={colors.textOnPrimary} />
+            <Text style={[styles.addBtnText, { color: colors.textOnPrimary }]}>{anprHasToken ? t('anprUpdateToken') : t('anprSetToken')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* App Settings - Language & Theme */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textDark, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('appSettings')}</Text>
@@ -324,6 +377,38 @@ export default function SettingsScreen() {
                 disabled={saving}
               >
                 {saving ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : <Text style={[styles.saveBtnText, { color: colors.textOnPrimary }]}>{t('save')}</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ANPR Token Modal */}
+      <Modal visible={anprModal} transparent animationType="slide">
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <Text style={[styles.modalTitle, { color: colors.textDark }]}>{t('anprSettings')}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('anprTokenLabel')}</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.surface, color: colors.textDark, borderColor: colors.border, textAlign: 'left' }]}
+              value={anprToken}
+              onChangeText={setAnprToken}
+              placeholder="xxxxxxxxxxxxxxxx"
+              placeholderTextColor={colors.textLight}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={[styles.fieldLabel, { color: colors.textLight, fontSize: 12, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('anprTokenHint')}</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]} onPress={() => { setAnprModal(false); setAnprToken(''); }}>
+                <Text style={[styles.cancelBtnText, { color: colors.textMedium }]}>{t('cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: colors.primary }, savingAnpr && { opacity: 0.7 }]}
+                onPress={handleSaveAnprToken}
+                disabled={savingAnpr}
+              >
+                {savingAnpr ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : <Text style={[styles.saveBtnText, { color: colors.textOnPrimary }]}>{t('save')}</Text>}
               </TouchableOpacity>
             </View>
           </View>

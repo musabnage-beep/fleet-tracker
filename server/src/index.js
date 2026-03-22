@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 // Routes
 app.use('/api/users', usersRouter);
@@ -32,7 +32,11 @@ app.get('/api/settings', async (req, res) => {
   const db = await getDb();
   const rows = await db.prepare('SELECT key, value FROM app_settings').all();
   const settings = {};
-  rows.forEach(r => { settings[r.key] = r.value; });
+  rows.forEach(r => {
+    // Don't expose sensitive tokens in public endpoint
+    if (r.key === 'plateRecognizerToken') return;
+    settings[r.key] = r.value;
+  });
   res.json(settings);
 });
 
@@ -64,6 +68,28 @@ app.post('/api/settings/logo', authMiddleware, adminOnly, async (req, res) => {
     await db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run('logo', logo);
   }
   res.json({ success: true });
+});
+
+// ANPR Settings (Plate Recognizer API Token)
+app.put('/api/settings/anpr', authMiddleware, adminOnly, async (req, res) => {
+  const { getDb } = require('./database');
+  const db = await getDb();
+  const { plateRecognizerToken } = req.body;
+  if (plateRecognizerToken === undefined) return res.status(400).json({ error: 'plateRecognizerToken is required' });
+  const existing = await db.prepare('SELECT key FROM app_settings WHERE key = ?').get('plateRecognizerToken');
+  if (existing) {
+    await db.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run(String(plateRecognizerToken), 'plateRecognizerToken');
+  } else {
+    await db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)').run('plateRecognizerToken', String(plateRecognizerToken));
+  }
+  res.json({ success: true });
+});
+
+app.get('/api/settings/anpr', authMiddleware, async (req, res) => {
+  const { getDb } = require('./database');
+  const db = await getDb();
+  const row = await db.prepare('SELECT value FROM app_settings WHERE key = ?').get('plateRecognizerToken');
+  res.json({ hasToken: !!(row && row.value) });
 });
 
 // Admin reset - clears all data except users

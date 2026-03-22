@@ -1,120 +1,18 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, FlatList,
   ActivityIndicator, Vibration, Dimensions, Animated, Modal,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
-let TextRecognition: any = null;
-let TextRecognitionScript: any = {};
-try {
-  const mlkit = require('@react-native-ml-kit/text-recognition');
-  TextRecognition = mlkit.default;
-  TextRecognitionScript = mlkit.TextRecognitionScript || {};
-} catch (e) {
-  console.warn('ML Kit Text Recognition not available');
-}
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { startScan, submitPlate, completeScan, getVehicles } from '../../services/api';
+import { getTodayShift, startScan, submitPlate, completeScan, recognizePlate, getVehicles } from '../../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Common words/text to REJECT (not license plates)
-const REJECT_WORDS = new Set([
-  'EXIT', 'STOP', 'PARK', 'NO', 'ONE', 'WAY', 'ZONE', 'MAX', 'MIN',
-  'THE', 'FOR', 'AND', 'NOT', 'ARE', 'WAS', 'HAS', 'HAD', 'BUT',
-  'SPEED', 'LIMIT', 'TAXI', 'BUS', 'ROAD', 'AUTO', 'CAR', 'VAN',
-  'OPEN', 'CLOSE', 'PUSH', 'PULL', 'FREE', 'SALE', 'NEW', 'OLD',
-  'HOTEL', 'SHOP', 'CAFE', 'BANK', 'MALL', 'MART', 'RENT',
-  'KSA', 'UAE', 'USA', 'COM', 'NET', 'ORG', 'WWW', 'HTTP',
-]);
-
-// Valid Saudi plate Latin letters (only these appear on Saudi plates)
-const VALID_SAUDI_LETTERS = new Set([
-  'A', 'B', 'D', 'E', 'G', 'H', 'J', 'K', 'L', 'N',
-  'R', 'S', 'T', 'U', 'V', 'X', 'Z',
-]);
-
-// Strict plate patterns - must have BOTH letters and digits
-const PLATE_PATTERNS = [
-  /[\u0621-\u064A]{1,3}\s+\d{1,4}/g,
-  /\d{1,4}\s+[\u0621-\u064A]{1,3}/g,
-  /\b[A-Z]{1,3}[\s\-]+\d{3,4}\b/gi,
-  /\b\d{3,4}[\s\-]+[A-Z]{1,3}\b/gi,
-  /\b[A-Z]{1,3}\d{3,4}\b/gi,
-  /\b\d{3,4}[A-Z]{1,3}\b/gi,
-];
-
-// OCR common misreads correction map
-const OCR_CORRECTIONS: Record<string, string> = {
-  'O': '0', 'I': '1', 'l': '1', 'Q': '0',
-  'o': '0', 'i': '1', '|': '1', 'Z': '2',
-};
-
-function fixOcrMisreads(text: string): string {
-  const parts = text.split(/(\d+)/);
-  let fixed = '';
-  for (const part of parts) {
-    if (/^\d+$/.test(part)) {
-      fixed += part;
-    } else {
-      fixed += part;
-    }
-  }
-  fixed = fixed.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
-  fixed = fixed.replace(/(\d)I/g, '$11').replace(/I(\d)/g, '1$1');
-  fixed = fixed.replace(/(\d)l/g, '$11').replace(/l(\d)/g, '1$1');
-  return fixed;
-}
-
-function isValidSaudiPlate(letters: string): boolean {
-  for (const ch of letters.toUpperCase()) {
-    if (ch === ' ' || ch === '-') continue;
-    if (/[A-Z]/.test(ch) && !VALID_SAUDI_LETTERS.has(ch)) return false;
-  }
-  return true;
-}
-
-function extractPlates(text: string): string[] {
-  const plates: Set<string> = new Set();
-  const lines = text.split(/\n/);
-
-  for (const line of lines) {
-    const cleanLine = fixOcrMisreads(line.trim());
-    if (!cleanLine || cleanLine.length < 4) continue;
-
-    for (const pattern of PLATE_PATTERNS) {
-      pattern.lastIndex = 0;
-      const matches = cleanLine.match(pattern);
-      if (matches) {
-        for (const m of matches) {
-          const cleaned = m.replace(/[\s\-]+/g, ' ').trim().toUpperCase();
-          if (cleaned.length < 4 || cleaned.length > 10) continue;
-          if (!/\d/.test(cleaned)) continue;
-          if (!/[A-Z\u0621-\u064A]/.test(cleaned)) continue;
-
-          const justLetters = cleaned.replace(/[\d\s]/g, '');
-          if (REJECT_WORDS.has(justLetters)) continue;
-
-          const digitCount = (cleaned.match(/\d/g) || []).length;
-          if (digitCount < 2) continue;
-
-          if (/[A-Z]/.test(justLetters) && !isValidSaudiPlate(justLetters)) continue;
-
-          plates.add(cleaned);
-        }
-      }
-    }
-  }
-  return Array.from(plates);
-}
-
-type PlateCandidate = { plate: string; count: number; firstSeen: number; };
-const CONFIDENCE_THRESHOLD = 2;
 
 export default function ScanScreen() {
   const { t, isRTL } = useLanguage();
@@ -184,21 +82,21 @@ export default function ScanScreen() {
       setScanning(true);
       setResults([]);
       submittedPlatesRef.current.clear();
-      plateCandidatesRef.current.clear();
-      intervalRef.current = setInterval(captureAndProcess, 1500);
+      // Start auto-scanning every 3 seconds
+      intervalRef.current = setInterval(captureAndRecognize, 3000);
     } catch (e: any) {
       Alert.alert(t('error'), e.message);
     }
   };
 
+  // Track already-submitted plates to avoid duplicate submissions
   const submittedPlatesRef = useRef<Set<string>>(new Set());
-  const plateCandidatesRef = useRef<Map<string, PlateCandidate>>(new Map());
 
-  const captureAndProcess = async () => {
+  const captureAndRecognize = async () => {
     if (!cameraRef.current || processingRef.current || !sessionIdRef.current) return;
 
     const now = Date.now();
-    if (now - lastScanTimeRef.current < 1200) return;
+    if (now - lastScanTimeRef.current < 2500) return;
     lastScanTimeRef.current = now;
 
     try {
@@ -211,79 +109,39 @@ export default function ScanScreen() {
         shutterSound: false,
       });
 
-      if (!TextRecognition) {
-        console.warn('OCR not available - use manual entry');
-        return;
-      }
+      // Convert to base64
+      const base64 = await FileSystem.readAsStringAsync(photo.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
-      const allPlates: string[] = [];
+      // Send to backend which calls Plate Recognizer API
+      const sid = sessionIdRef.current || sessionId;
+      const response = await recognizePlate(sid, base64);
 
-      // Pass 1: Full image
-      const fullEnhanced = await ImageManipulator.manipulateAsync(
-        photo.uri,
-        [{ resize: { width: 2000 } }],
-        { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG }
-      );
-      const fullResult = await TextRecognition.recognize(fullEnhanced.uri);
-      if (fullResult?.text) {
-        allPlates.push(...extractPlates(fullResult.text));
-      }
-
-      // Pass 2: Cropped center
-      const cropEnhanced = await ImageManipulator.manipulateAsync(
-        photo.uri,
-        [
-          { crop: {
-            originX: photo.width * 0.1,
-            originY: photo.height * 0.3,
-            width: photo.width * 0.8,
-            height: photo.height * 0.4,
-          }},
-          { resize: { width: 2000 } },
-        ],
-        { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG }
-      );
-      const cropResult = await TextRecognition.recognize(cropEnhanced.uri);
-      if (cropResult?.text) {
-        allPlates.push(...extractPlates(cropResult.text));
-      }
-
-      const uniquePlates = [...new Set(allPlates)];
-
-      // Confidence tracking
-      for (const plate of uniquePlates) {
-        if (submittedPlatesRef.current.has(plate)) continue;
-
-        const existing = plateCandidatesRef.current.get(plate);
-        if (existing) {
-          existing.count++;
-          if (existing.count >= CONFIDENCE_THRESHOLD) {
-            submittedPlatesRef.current.add(plate);
-            plateCandidatesRef.current.delete(plate);
-            await submitPlateNumber(plate);
+      // Process results
+      if (response.results && response.results.length > 0) {
+        for (const result of response.results) {
+          if (!result.duplicate) {
+            const plateKey = result.plate_number;
+            if (!submittedPlatesRef.current.has(plateKey)) {
+              submittedPlatesRef.current.add(plateKey);
+              Vibration.vibrate(result.status === 'found' ? 100 : [0, 100, 50, 100]);
+              if (result.status === 'found') showMatchBanner(plateKey);
+              setResults(prev => [{ ...result, confidence: result.confidence }, ...prev]);
+            }
           }
-        } else {
-          plateCandidatesRef.current.set(plate, {
-            plate, count: 1, firstSeen: now,
-          });
-        }
-      }
-
-      // Clean old candidates
-      for (const [key, candidate] of plateCandidatesRef.current) {
-        if (now - candidate.firstSeen > 10000) {
-          plateCandidatesRef.current.delete(key);
         }
       }
 
     } catch (e) {
-      console.warn('[OCR] Frame processing error:', e);
+      console.warn('[ANPR] Frame processing error:', e);
     } finally {
       processingRef.current = false;
       setProcessing(false);
     }
   };
 
+  // Manual plate entry with TextInput (cross-platform)
   const [manualPlate, setManualPlate] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
 
@@ -524,7 +382,14 @@ export default function ScanScreen() {
             const s = getStatusStyle(item.status);
             return (
               <View style={[styles.resultItem, { backgroundColor: s.bg }]}>
-                <Text style={[styles.resultPlate, { color: colors.textDark }]}>{item.plate_number}</Text>
+                <View>
+                  <Text style={[styles.resultPlate, { color: colors.textDark }]}>{item.plate_number}</Text>
+                  {item.confidence !== undefined && (
+                    <Text style={[styles.confidenceText, { color: colors.textMedium }]}>
+                      {Math.round(item.confidence * 100)}%
+                    </Text>
+                  )}
+                </View>
                 <Text style={[styles.resultStatus, { color: s.color }]}>{s.text}</Text>
               </View>
             );
@@ -748,6 +613,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 16,
     letterSpacing: 1,
+  },
+  confidenceText: {
+    fontFamily: 'ExpoArabic-Light',
+    fontSize: 11,
+    marginTop: 2,
   },
   resultStatus: { fontFamily: 'ExpoArabic-Book', fontSize: 13 },
   emptyText: {

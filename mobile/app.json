@@ -26,9 +26,7 @@
       "package": "com.fleettracker.app",
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION"
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -55,11 +53,11 @@
     ],
     "scheme": "fleettracker",
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "1583b750-fc0c-4898-a9d8-328eacd6741a"
-      },
-      "router": {}
+        "projectId": "6a5fb624-84fe-432d-8300-68968666e6e1"
+      }
     },
-    "owner": "musab_nage"
+    "owner": "musab7alabi"
   }
 }
