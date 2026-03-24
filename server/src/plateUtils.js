@@ -38,11 +38,6 @@ const AR_DIGITS = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥':
  *   "RSB 1527"    -> "1527 RSB"
  *   "ر ص ب1527"  -> "1527 RSB"
  *   "٦٢٥١ أ ج ع" -> "6251 EJA" (if Arabic digits)
- *
- * Edge cases (Fix #13):
- *   "1234"         -> "1234"   (pure numeric — no letters, return digits only)
- *   "ABC"          -> "ABC"    (pure letters — no digits, return letters only)
- *   ""             -> ""
  */
 function normalizePlate(plate) {
   if (!plate) return '';
@@ -70,10 +65,7 @@ function normalizePlate(plate) {
   const digits = converted.replace(/[^0-9]/g, '');
   const letters = converted.replace(/[^A-Z]/g, '');
 
-  // Fix #13: handle plates that contain only digits or only letters
-  if (!digits && !letters) return converted; // completely non-alphanumeric — return as-is
-  if (!letters) return digits;               // pure numeric plate (e.g. "1234")
-  if (!digits) return letters;               // pure letter plate (rare edge case)
+  if (!digits || !letters) return converted; // fallback
 
   // Standard format: DIGITS + space + LETTERS
   return `${digits} ${letters}`;

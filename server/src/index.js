@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { initializeDatabase, IS_POSTGRES } = require('./database');
+const { initializeDatabase } = require('./database');
 const usersRouter = require('./routes/users');
 const vehiclesRouter = require('./routes/vehicles');
 const shiftsRouter = require('./routes/shifts');
@@ -11,14 +11,8 @@ const { authMiddleware, adminOnly } = require('./auth');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Fix #8: CORS — open for development; in production restrict to your app origins.
-// Currently left open for Expo Go / EAS build compatibility.
-// TODO: replace '*' with your Expo-hosted / custom domain in production.
-app.use(cors({
-  origin: IS_POSTGRES ? true : '*', // 'true' mirrors the request origin (permissive but logged)
-  credentials: true,
-}));
-
+// Middleware
+app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 // Routes
@@ -117,7 +111,6 @@ async function start() {
     console.log(`\n========================================`);
     console.log(`  Fleet Tracker Server`);
     console.log(`  Running on port ${PORT}`);
-    console.log(`  Mode: ${IS_POSTGRES ? 'PostgreSQL (production)' : 'SQLite (local)'}`);
     console.log(`  http://localhost:${PORT}`);
     console.log(`========================================\n`);
   });

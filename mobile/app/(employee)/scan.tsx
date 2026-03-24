@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, FlatList,
-  ActivityIndicator, Vibration, Dimensions, Animated, Modal, TextInput,
+  ActivityIndicator, Vibration, Dimensions, Animated, Modal,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
@@ -10,19 +10,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import {
-  startScan, submitPlate, completeScan, recognizePlate,
-  getVehicles, getAnprSettings,
-} from '../../services/api';
+import { getTodayShift, startScan, submitPlate, completeScan, recognizePlate, getVehicles } from '../../services/api';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ScanScreen() {
   const { t, isRTL } = useLanguage();
   const { colors } = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
-
-  // Session / scanning state
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [scanning, setScanning] = useState(false);
   const [torch, setTorch] = useState(false);
@@ -30,57 +25,25 @@ export default function ScanScreen() {
   const [processing, setProcessing] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [vehicleCount, setVehicleCount] = useState(0);
-
-  // Fix #1e / #1d: ANPR token status + visible debug badge
-  const [hasAnprToken, setHasAnprToken] = useState<boolean | null>(null);
-  const [scanDebugMsg, setScanDebugMsg] = useState<string>('');
-
-  // Manual plate entry — Fix #2: always visible, no toggle needed
-  const [manualPlate, setManualPlate] = useState('');
-
-  // Summary modal
-  const [showSummary, setShowSummary] = useState(false);
-  const [scanSummary, setScanSummary] = useState<any>(null);
-
-  // Match notification banner
-  const [matchNotification, setMatchNotification] = useState<{ plate: string; visible: boolean } | null>(null);
-  const matchAnim = useRef(new Animated.Value(0)).current;
-
-  // Refs — keep these stable across renders
+  const lastScanTimeRef = useRef(0);
   const cameraRef = useRef<any>(null);
   const intervalRef = useRef<any>(null);
   const sessionIdRef = useRef<number | null>(null);
   const processingRef = useRef(false);
-  const forcedResetTimerRef = useRef<any>(null);
   const locationRef = useRef<{ latitude: number; longitude: number } | null>(null);
-  const lastScanTimeRef = useRef(0);
-  // Fix #11: submittedPlatesRef declared before any handler that uses it
-  const submittedPlatesRef = useRef<Set<string>>(new Set());
 
-  // Fix #11: proper cleanup when navigating away mid-scan
+  // Match notification state
+  const [matchNotification, setMatchNotification] = useState<{ plate: string; visible: boolean } | null>(null);
+  const matchAnim = useRef(new Animated.Value(0)).current;
+
+  // Summary modal state
+  const [showSummary, setShowSummary] = useState(false);
+  const [scanSummary, setScanSummary] = useState<any>(null);
+
   useFocusEffect(useCallback(() => {
     loadVehicleCount();
-    loadAnprStatus();
-
     return () => {
-      // Clear auto-scan interval
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      if (forcedResetTimerRef.current) {
-        clearTimeout(forcedResetTimerRef.current);
-        forcedResetTimerRef.current = null;
-      }
-      // Reset session so a stale session_id is never reused on re-entry
-      sessionIdRef.current = null;
-      setSessionId(null);
-      setScanning(false);
-      setResults([]);
-      setProcessing(false);
-      processingRef.current = false;
-      submittedPlatesRef.current.clear();
-      setScanDebugMsg('');
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []));
 
@@ -89,16 +52,6 @@ export default function ScanScreen() {
       const data = await getVehicles();
       setVehicleCount(Array.isArray(data) ? data.length : 0);
     } catch (e) {}
-  };
-
-  // Fix #1e: check whether ANPR token is configured
-  const loadAnprStatus = async () => {
-    try {
-      const data = await getAnprSettings();
-      setHasAnprToken(!!data.hasToken);
-    } catch (e) {
-      setHasAnprToken(false);
-    }
   };
 
   const getLocation = async () => {
@@ -129,7 +82,6 @@ export default function ScanScreen() {
       setScanning(true);
       setResults([]);
       submittedPlatesRef.current.clear();
-      setScanDebugMsg('');
       // Start auto-scanning every 3 seconds
       intervalRef.current = setInterval(captureAndRecognize, 3000);
     } catch (e: any) {
@@ -137,7 +89,9 @@ export default function ScanScreen() {
     }
   };
 
-  // Fix #1a/b: captureAndRecognize with forced safety reset and visible debug feedback
+  // Track already-submitted plates to avoid duplicate submissions
+  const submittedPlatesRef = useRef<Set<string>>(new Set());
+
   const captureAndRecognize = async () => {
     if (!cameraRef.current || processingRef.current || !sessionIdRef.current) return;
 
@@ -145,78 +99,57 @@ export default function ScanScreen() {
     if (now - lastScanTimeRef.current < 2500) return;
     lastScanTimeRef.current = now;
 
-    // Fix #1b: forced safety reset timer — if something hangs for >10s, unblock
-    if (forcedResetTimerRef.current) clearTimeout(forcedResetTimerRef.current);
-    forcedResetTimerRef.current = setTimeout(() => {
-      if (processingRef.current) {
-        processingRef.current = false;
-        setProcessing(false);
-        setScanDebugMsg('Reset (timeout)');
-      }
-    }, 10000);
-
     try {
       processingRef.current = true;
       setProcessing(true);
-      setScanDebugMsg('Capturing...');
 
-      // Fix #1a: SDK 55 CameraView — use type assertion to call takePictureAsync
-      const photo = await (cameraRef.current as any).takePictureAsync({
-        quality: 0.8,
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.9,
         skipProcessing: true,
         shutterSound: false,
       });
 
-      setScanDebugMsg('Sending to ANPR...');
-
-      // Fix #1c: read as raw base64 — no data-URI prefix
+      // Convert to base64
       const base64 = await FileSystem.readAsStringAsync(photo.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      const sid = sessionIdRef.current;
-      if (!sid) return;
-
+      // Send to backend which calls Plate Recognizer API
+      const sid = sessionIdRef.current || sessionId;
       const response = await recognizePlate(sid, base64);
 
-      const detected = (response.results || []).length;
-      if (detected === 0) {
-        setScanDebugMsg('No plate detected');
-        return;
-      }
-
-      setScanDebugMsg(`Detected ${detected} plate(s)`);
-
-      for (const result of response.results) {
-        if (!result.duplicate) {
-          const plateKey = result.plate_number;
-          if (!submittedPlatesRef.current.has(plateKey)) {
-            submittedPlatesRef.current.add(plateKey);
-            Vibration.vibrate(result.status === 'found' ? 100 : [0, 100, 50, 100]);
-            if (result.status === 'found') showMatchBanner(plateKey);
-            setResults(prev => [{ ...result, confidence: result.confidence }, ...prev]);
+      // Process results
+      if (response.results && response.results.length > 0) {
+        for (const result of response.results) {
+          if (!result.duplicate) {
+            const plateKey = result.plate_number;
+            if (!submittedPlatesRef.current.has(plateKey)) {
+              submittedPlatesRef.current.add(plateKey);
+              Vibration.vibrate(result.status === 'found' ? 100 : [0, 100, 50, 100]);
+              if (result.status === 'found') showMatchBanner(plateKey);
+              setResults(prev => [{ ...result, confidence: result.confidence }, ...prev]);
+            }
           }
         }
       }
-    } catch (e: any) {
-      // Fix #1d: surface actual error message in the debug badge
-      const msg = e.message || 'Unknown error';
-      console.warn('[ANPR] Scan error:', msg);
-      setScanDebugMsg(`Error: ${msg}`);
+
+    } catch (e) {
+      console.warn('[ANPR] Frame processing error:', e);
     } finally {
-      if (forcedResetTimerRef.current) clearTimeout(forcedResetTimerRef.current);
-      // Fix #1b: always reset processing flag in finally
       processingRef.current = false;
       setProcessing(false);
     }
   };
 
-  // Fix #2: submitPlateNumber — called by manual entry
+  // Manual plate entry with TextInput (cross-platform)
+  const [manualPlate, setManualPlate] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false);
+
   const submitPlateNumber = async (plate: string) => {
-    const sid = sessionIdRef.current || sessionId;
-    if (!sid || !plate) return;
+    if (!sessionId && !sessionIdRef.current || !plate) return;
     try {
-      const result = await submitPlate(sid, plate, locationRef.current || undefined);
+      const sid = sessionIdRef.current || sessionId;
+      const result = await submitPlate(sid!, plate, locationRef.current || undefined);
       if (!result.duplicate) {
         if (result.status === 'found') {
           Vibration.vibrate(100);
@@ -232,16 +165,15 @@ export default function ScanScreen() {
   };
 
   const handleCompleteScan = async () => {
-    const sid = sessionIdRef.current || sessionId;
-    if (!sid) return;
+    if (!sessionId && !sessionIdRef.current) return;
     setCompleting(true);
     try {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      const report = await completeScan(sid);
+      const sid = sessionIdRef.current || sessionId;
+      const report = await completeScan(sid!);
       setScanning(false);
       setSessionId(null);
       sessionIdRef.current = null;
-      submittedPlatesRef.current.clear();
 
       const { summary, session } = report;
       setScanSummary({
@@ -258,10 +190,7 @@ export default function ScanScreen() {
     }
   };
 
-  // ─── Permission screen ────────────────────────────────────────────────────
-  if (!permission) {
-    return <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>;
-  }
+  if (!permission) return <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>;
   if (!permission.granted) {
     return (
       <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
@@ -275,28 +204,16 @@ export default function ScanScreen() {
     );
   }
 
-  // ─── Start screen (not scanning yet) ─────────────────────────────────────
   if (!scanning) {
     return (
       <View style={[styles.startContainer, { backgroundColor: colors.background }]}>
         <Ionicons name="scan-circle-outline" size={80} color={colors.primary} />
         <Text style={[styles.startTitle, { color: colors.textDark }]}>{t('scanVehiclePlates')}</Text>
-
-        {/* Fix #10: always show vehicle DB count with a clear label */}
         <Text style={[styles.startSub, { color: colors.textMedium }]}>
-          {t('vehiclesInDatabase') || 'Vehicles in database'}{': '}{vehicleCount}
+          {vehicleCount > 0
+            ? `${vehicleCount} ${t('vehiclesInDatabase')}`
+            : t('readyToScan')}
         </Text>
-
-        {/* Fix #1e: ANPR token warning on start screen */}
-        {hasAnprToken === false && (
-          <View style={[styles.warningBanner, { backgroundColor: '#FFF3CD', borderColor: '#FFC107' }]}>
-            <Ionicons name="warning-outline" size={18} color="#856404" />
-            <Text style={[styles.warningText, { color: '#856404' }]}>
-              {t('anprNotConfigured') || 'ANPR token not configured — camera scanning disabled. Set it in Admin → Settings.'}
-            </Text>
-          </View>
-        )}
-
         <TouchableOpacity
           style={[styles.startBtn, { backgroundColor: colors.primary }]}
           onPress={handleStartScan}
@@ -348,13 +265,11 @@ export default function ScanScreen() {
     );
   }
 
-  // ─── Status style helper ──────────────────────────────────────────────────
   const getStatusStyle = (status: string) => {
     if (status === 'found') return { bg: colors.successLight, color: colors.success, text: t('foundStatus') };
     return { bg: colors.dangerLight, color: colors.danger, text: t('unknownStatus') };
   };
 
-  // ─── Active scanning screen ───────────────────────────────────────────────
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Camera */}
@@ -365,16 +280,15 @@ export default function ScanScreen() {
           facing="back"
           enableTorch={torch}
         >
+          {/* Overlay */}
           <View style={styles.overlay}>
             {/* Match Notification Banner */}
             {matchNotification?.visible && (
               <Animated.View style={[
                 styles.matchBanner,
-                {
-                  backgroundColor: colors.success,
-                  opacity: matchAnim,
-                  transform: [{ translateY: matchAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 0] }) }],
-                },
+                { backgroundColor: colors.success, opacity: matchAnim,
+                  transform: [{ translateY: matchAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 0] }) }]
+                }
               ]}>
                 <Ionicons name="checkmark-circle" size={28} color="#FFFFFF" />
                 <View style={styles.matchTextContainer}>
@@ -382,16 +296,6 @@ export default function ScanScreen() {
                   <Text style={styles.matchText}>{t('plateFoundInDb')}</Text>
                 </View>
               </Animated.View>
-            )}
-
-            {/* Fix #1e: ANPR token warning inside camera view */}
-            {hasAnprToken === false && (
-              <View style={styles.anprWarningOverlay}>
-                <Ionicons name="warning" size={16} color="#856404" />
-                <Text style={styles.anprWarningText}>
-                  {t('anprNotConfigured') || 'ANPR token not set — go to Admin → Settings'}
-                </Text>
-              </View>
             )}
 
             {/* Top controls */}
@@ -402,14 +306,12 @@ export default function ScanScreen() {
               >
                 <Ionicons name={torch ? 'flash' : 'flash-off'} size={22} color="#FFFFFF" />
               </TouchableOpacity>
-
-              {/* Fix #1d: always-visible scan status badge */}
-              <View style={[styles.processingBadge, { backgroundColor: processing ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.35)' }]}>
-                {processing && <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 4 }} />}
-                <Text style={styles.processingText} numberOfLines={1}>
-                  {processing ? (t('scanning') || 'Scanning…') : (scanDebugMsg || (t('autoScanActive') || 'Auto-scan active'))}
-                </Text>
-              </View>
+              {processing && (
+                <View style={styles.processingBadge}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.processingText}>{t('scanning')}</Text>
+                </View>
+              )}
             </View>
 
             {/* Scan frame */}
@@ -423,50 +325,52 @@ export default function ScanScreen() {
           </View>
         </CameraView>
 
-        {/* Fix #2: Manual entry — always visible, clearly labelled, large input */}
+        {/* Manual entry button */}
         <View style={[styles.manualEntryBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <Text style={[styles.manualEntryLabel, { color: colors.textMedium }]}>
-            {t('manualEntry') || 'Manual plate entry'}
-          </Text>
+          <TouchableOpacity
+            style={[styles.manualBtn, { backgroundColor: colors.surface }]}
+            onPress={() => setShowManualInput(!showManualInput)}
+          >
+            <Ionicons name="keypad-outline" size={18} color={colors.primary} />
+            <Text style={[styles.manualBtnText, { color: colors.primary }]}>{t('manualEntry')}</Text>
+          </TouchableOpacity>
+
           <Text style={[styles.resultCount, { color: colors.textMedium }]}>{results.length} {t('scannedPlate')}</Text>
         </View>
 
-        <View style={[styles.manualInputContainer, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <View style={styles.manualInputRow}>
-            <View style={[styles.manualInputWrapper, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <TextInput
-                style={[styles.manualTextInput, { color: colors.textDark }]}
-                value={manualPlate}
-                onChangeText={text => setManualPlate(text.toUpperCase())}
-                placeholder={t('enterPlateNumber') || 'e.g. 1527 RSB'}
-                placeholderTextColor={colors.textLight}
-                autoCapitalize="characters"
-                onSubmitEditing={() => {
+        {/* Manual Input */}
+        {showManualInput && (
+          <View style={[styles.manualInputContainer, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+            <View style={styles.manualInputRow}>
+              <TouchableOpacity
+                style={[styles.manualSubmitBtn, { backgroundColor: colors.primary }]}
+                onPress={() => {
                   if (manualPlate.trim()) {
-                    submitPlateNumber(manualPlate.trim());
+                    submitPlateNumber(manualPlate.trim().toUpperCase());
                     setManualPlate('');
                   }
                 }}
-                returnKeyType="send"
-              />
+              >
+                <Ionicons name="send" size={20} color={colors.textOnPrimary} />
+              </TouchableOpacity>
+              <View style={[styles.manualInputWrapper, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <TextInputComponent
+                  value={manualPlate}
+                  onChangeText={setManualPlate}
+                  placeholder={t('enterPlateNumber')}
+                  onSubmit={() => {
+                    if (manualPlate.trim()) {
+                      submitPlateNumber(manualPlate.trim().toUpperCase());
+                      setManualPlate('');
+                    }
+                  }}
+                  colors={colors}
+                  isRTL={isRTL}
+                />
+              </View>
             </View>
-            {/* Fix #2: prominent submit button labelled "Submit" */}
-            <TouchableOpacity
-              style={[styles.manualSubmitBtn, { backgroundColor: colors.primary }]}
-              onPress={() => {
-                if (manualPlate.trim()) {
-                  submitPlateNumber(manualPlate.trim());
-                  setManualPlate('');
-                }
-              }}
-            >
-              <Ionicons name="send" size={18} color={colors.textOnPrimary} />
-              <Text style={[styles.manualSubmitBtnText, { color: colors.textOnPrimary }]}>
-                {t('submit') || 'Submit'}
-              </Text>
-            </TouchableOpacity>
           </View>
-        </View>
+        )}
       </View>
 
       {/* Results List */}
@@ -517,6 +421,30 @@ export default function ScanScreen() {
   );
 }
 
+function TextInputComponent({ value, onChangeText, placeholder, onSubmit, colors, isRTL }: any) {
+  const { TextInput } = require('react-native');
+  return (
+    <TextInput
+      style={{
+        flex: 1,
+        fontFamily: 'Urbanist',
+        fontSize: 16,
+        color: colors.textDark,
+        textAlign: isRTL ? 'right' : 'left',
+        fontWeight: '700',
+        letterSpacing: 1,
+      }}
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={colors.textLight}
+      autoCapitalize="characters"
+      onSubmitEditing={onSubmit}
+      returnKeyType="send"
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -543,22 +471,6 @@ const styles = StyleSheet.create({
   },
   startTitle: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 22, marginTop: 16 },
   startSub: { fontFamily: 'ExpoArabic-Light', fontSize: 14, marginTop: 8 },
-  warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 16,
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    width: '100%',
-  },
-  warningText: {
-    flex: 1,
-    fontFamily: 'ExpoArabic-Book',
-    fontSize: 13,
-    lineHeight: 18,
-  },
   startBtn: {
     borderRadius: 16,
     paddingHorizontal: 40,
@@ -570,9 +482,10 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   startBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 18 },
-  cameraContainer: { height: '45%' },
+  cameraContainer: { height: '40%' },
   camera: { flex: 1 },
   overlay: { flex: 1, justifyContent: 'space-between' },
+  // Match notification banner
   matchBanner: {
     position: 'absolute',
     top: 0,
@@ -593,29 +506,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     letterSpacing: 1,
   },
-  matchText: { fontFamily: 'ExpoArabic-Light', fontSize: 12, color: '#FFFFFF' },
-  anprWarningOverlay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,243,205,0.92)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    margin: 8,
-    borderRadius: 8,
-    alignSelf: 'stretch',
-  },
-  anprWarningText: {
-    flex: 1,
-    fontFamily: 'ExpoArabic-Book',
+  matchText: {
+    fontFamily: 'ExpoArabic-Light',
     fontSize: 12,
-    color: '#856404',
+    color: '#FFFFFF',
   },
   topControls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    padding: 16,
     paddingTop: 8,
   },
   controlBtn: {
@@ -629,10 +529,11 @@ const styles = StyleSheet.create({
   processingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
-    maxWidth: SCREEN_WIDTH * 0.55,
   },
   processingText: { fontFamily: 'ExpoArabic-Light', fontSize: 12, color: '#FFFFFF' },
   scanFrame: {
@@ -643,7 +544,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  corner: { position: 'absolute', width: 24, height: 24 },
+  corner: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+  },
   topRight: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3 },
   topLeft: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3 },
   bottomRight: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3 },
@@ -660,47 +565,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-  },
-  manualEntryLabel: {
-    fontFamily: 'ExpoArabic-SemiBold',
-    fontSize: 13,
-  },
-  resultCount: { fontFamily: 'ExpoArabic-Light', fontSize: 12 },
-  manualInputContainer: {
     padding: 10,
     borderBottomWidth: 1,
   },
-  manualInputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  manualBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  manualBtnText: { fontFamily: 'ExpoArabic-Book', fontSize: 13 },
+  resultCount: { fontFamily: 'ExpoArabic-Light', fontSize: 12 },
+  manualInputContainer: {
+    padding: 12,
+    borderBottomWidth: 1,
+  },
+  manualInputRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   manualInputWrapper: {
     flex: 1,
     borderRadius: 10,
     paddingHorizontal: 14,
-    height: 48,
+    height: 44,
     justifyContent: 'center',
     borderWidth: 1,
   },
-  manualTextInput: {
-    flex: 1,
-    fontFamily: 'Urbanist',
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
   manualSubmitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 48,
-    paddingHorizontal: 16,
+    width: 44,
+    height: 44,
     borderRadius: 10,
     justifyContent: 'center',
-  },
-  manualSubmitBtnText: {
-    fontFamily: 'ExpoArabic-SemiBold',
-    fontSize: 14,
+    alignItems: 'center',
   },
   resultsContainer: { flex: 1 },
   resultItem: {
@@ -718,7 +614,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     letterSpacing: 1,
   },
-  confidenceText: { fontFamily: 'ExpoArabic-Light', fontSize: 11, marginTop: 2 },
+  confidenceText: {
+    fontFamily: 'ExpoArabic-Light',
+    fontSize: 11,
+    marginTop: 2,
+  },
   resultStatus: { fontFamily: 'ExpoArabic-Book', fontSize: 13 },
   emptyText: {
     fontFamily: 'ExpoArabic-Light',
@@ -726,7 +626,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 20,
   },
-  bottomBar: { padding: 16, borderTopWidth: 1 },
+  bottomBar: {
+    padding: 16,
+    borderTopWidth: 1,
+  },
   completeBtn: {
     borderRadius: 14,
     height: 52,
@@ -737,6 +640,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   completeBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 16 },
+  // Summary Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -754,7 +658,12 @@ const styles = StyleSheet.create({
   },
   summaryTitle: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 22 },
   summaryRow: { flexDirection: 'row', gap: 12, width: '100%' },
-  summaryBox: { flex: 1, borderRadius: 14, padding: 16, alignItems: 'center' },
+  summaryBox: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+  },
   summaryNum: { fontFamily: 'Urbanist', fontWeight: '900', fontSize: 32 },
   summaryLabel: { fontFamily: 'ExpoArabic-Light', fontSize: 13, marginTop: 4 },
   summaryDuration: {

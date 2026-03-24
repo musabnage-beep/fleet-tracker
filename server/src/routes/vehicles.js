@@ -31,7 +31,7 @@ router.post('/', authMiddleware, adminOnly, async (req, res) => {
     const vehicle = await db.prepare('SELECT * FROM vehicles WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(vehicle);
   } catch (e) {
-    if (e.message && (e.message.includes('UNIQUE') || e.message.includes('duplicate key')) || e.code === '23505') {
+    if (e.message && e.message.includes('UNIQUE') || e.message.includes('duplicate key') || e.code === '23505') {
       return res.status(409).json({ error: 'رقم اللوحة مسجل بالفعل' });
     }
     res.status(500).json({ error: 'حدث خطأ في الخادم' });
@@ -53,7 +53,7 @@ router.put('/:id', authMiddleware, adminOnly, async (req, res) => {
     const vehicle = await db.prepare('SELECT * FROM vehicles WHERE id = ?').get(Number(req.params.id));
     res.json(vehicle);
   } catch (e) {
-    if (e.message && (e.message.includes('UNIQUE') || e.message.includes('duplicate key')) || e.code === '23505') {
+    if (e.message && e.message.includes('UNIQUE') || e.message.includes('duplicate key') || e.code === '23505') {
       return res.status(409).json({ error: 'رقم اللوحة مسجل بالفعل' });
     }
     res.status(500).json({ error: 'حدث خطأ في الخادم' });
@@ -68,6 +68,7 @@ router.post('/import-file', authMiddleware, adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'لا يوجد ملف' });
     }
 
+    // Parse Excel file from base64 on the server (where Buffer is available)
     const buffer = Buffer.from(fileData, 'base64');
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
@@ -78,6 +79,7 @@ router.post('/import-file', authMiddleware, adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'الملف فارغ' });
     }
 
+    // Detect columns
     let plateCol = 0;
     let descCol = 1;
     const firstRow = rows[0];
@@ -109,6 +111,7 @@ router.post('/import-file', authMiddleware, adminOnly, async (req, res) => {
       return res.status(400).json({ error: 'لا توجد بيانات صالحة في الملف' });
     }
 
+    // Insert vehicles
     const db = await getDb();
     let added = 0;
     let duplicates = 0;

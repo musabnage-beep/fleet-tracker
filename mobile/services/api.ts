@@ -8,8 +8,7 @@ async function getToken(): Promise<string | null> {
   return AsyncStorage.getItem(TOKEN_KEY);
 }
 
-// Fix #12: core request helper with configurable timeout (default 30s).
-async function request(endpoint: string, options: RequestInit = {}, timeoutMs = 30000) {
+async function request(endpoint: string, options: RequestInit = {}) {
   const token = await getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -19,38 +18,24 @@ async function request(endpoint: string, options: RequestInit = {}, timeoutMs = 
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const response = await fetch(`${APP_CONFIG.serverUrl}/api${endpoint}`, {
+    ...options,
+    headers,
+  });
 
-  try {
-    const response = await fetch(`${APP_CONFIG.serverUrl}/api${endpoint}`, {
-      ...options,
-      headers,
-      signal: controller.signal,
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'حدث خطأ في الاتصال');
-    }
-    return data;
-  } catch (e: any) {
-    if (e.name === 'AbortError') {
-      throw new Error('انتهت مهلة الاتصال. تحقق من عنوان الخادم وإتصالك بالإنترنت.');
-    }
-    throw e;
-  } finally {
-    clearTimeout(timeoutId);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'حدث خطأ في الاتصال');
   }
+  return data;
 }
 
 // Auth
-// Fix #12: login uses 60-second timeout to survive Render cold-start spin-up.
 export async function login(username: string, password: string, device_id?: string) {
   const data = await request('/users/login', {
     method: 'POST',
     body: JSON.stringify({ username, password, device_id }),
-  }, 60000);
+  });
   await AsyncStorage.setItem(TOKEN_KEY, data.token);
   await AsyncStorage.setItem(USER_KEY, JSON.stringify(data.user));
   return data.user;
@@ -113,9 +98,6 @@ export const deleteUser = (id: number) =>
   request(`/users/${id}`, { method: 'DELETE' });
 export const resetUserDevice = (id: number) =>
   request(`/users/${id}/reset-device`, { method: 'PUT' });
-// Fix #9: update a user's password (admin only)
-export const updateUserPassword = (id: number, newPassword: string) =>
-  request(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ newPassword }) });
 
 // Reports Excel
 export const getReportExcel = (sessionId: number) => request(`/reports/excel/${sessionId}`);

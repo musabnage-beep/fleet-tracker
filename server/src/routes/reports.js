@@ -1,6 +1,6 @@
 const express = require('express');
 const XLSX = require('xlsx');
-const { getDb, IS_POSTGRES } = require('../database');
+const { getDb } = require('../database');
 const { authMiddleware, adminOnly } = require('../auth');
 const { normalizePlate, findVehicleByPlate } = require('../plateUtils');
 
@@ -36,14 +36,12 @@ router.post('/scan/plate-recognize', authMiddleware, async (req, res) => {
 
   // Get API token from settings
   const tokenRow = await db.prepare('SELECT value FROM app_settings WHERE key = ?').get('plateRecognizerToken');
-  if (!tokenRow || !tokenRow.value) {
-    return res.status(400).json({ error: 'Plate Recognizer API token not configured. Set it in admin settings.' });
-  }
+  if (!tokenRow || !tokenRow.value) return res.status(400).json({ error: 'Plate Recognizer API token not configured. Set it in admin settings.' });
 
   try {
+    // Call Plate Recognizer API
     const FormData = require('form-data');
     const formData = new FormData();
-    // Fix #1c: send raw base64 buffer (no data-URI prefix)
     formData.append('upload', Buffer.from(image, 'base64'), { filename: 'plate.jpg', contentType: 'image/jpeg' });
     formData.append('regions', 'sa');
 
@@ -60,20 +58,18 @@ router.post('/scan/plate-recognize', authMiddleware, async (req, res) => {
     if (!apiResponse.ok) {
       const errText = await apiResponse.text();
       console.error('Plate Recognizer API error:', apiResponse.status, errText);
-      // Fix #1c: surface the actual API error back to the client
-      return res.status(apiResponse.status).json({
-        error: `ANPR API error ${apiResponse.status}: ${errText}`,
-      });
+      return res.status(apiResponse.status).json({ error: `ANPR API error: ${apiResponse.status}` });
     }
 
     const apiData = await apiResponse.json();
     const results = [];
 
+    // Process each detected plate
     for (const result of (apiData.results || [])) {
       const plateText = normalizePlate(result.plate.toUpperCase());
       const confidence = result.score;
 
-      if (!plateText || plateText.length < 2) continue;
+      if (!plateText || plateText.length < 3) continue;
 
       // Check if already submitted in this session
       const existing = await db.prepare('SELECT * FROM scan_results WHERE session_id = ? AND plate_number = ?').get(session_id, plateText);
@@ -82,14 +78,17 @@ router.post('/scan/plate-recognize', authMiddleware, async (req, res) => {
         continue;
       }
 
-      // Fix #3: status is simply 'found' if vehicle exists in DB, else 'unknown'.
-      // No shift-based 'not_in_shift' logic in employee scan flow.
-      const vehicle = await findVehicleByPlate(db, plateText);
-      const status = vehicle ? 'found' : 'unknown';
+      // Match against vehicles
+      const vehicle = await db.prepare('SELECT * FROM vehicles WHERE plate_number = ? AND is_active = 1').get(plateText);
+      let status;
+      if (vehicle) {
+        const inShift = await db.prepare('SELECT * FROM shift_vehicles WHERE shift_id = ? AND vehicle_id = ?').get(session.shift_id, vehicle.id);
+        status = inShift ? 'found' : 'not_in_shift';
+      } else {
+        status = 'unknown';
+      }
 
-      const insertResult = await db.prepare(
-        'INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)'
-      ).run(session_id, plateText, vehicle ? vehicle.id : null, status);
+      const insertResult = await db.prepare('INSERT INTO scan_results (session_id, plate_number, vehicle_id, status) VALUES (?, ?, ?, ?)').run(session_id, plateText, vehicle ? vehicle.id : null, status);
       const scanResult = await db.prepare('SELECT * FROM scan_results WHERE id = ?').get(insertResult.lastInsertRowid);
       results.push({ ...scanResult, duplicate: false, confidence });
     }
@@ -105,7 +104,7 @@ router.post('/scan/plate-recognize', authMiddleware, async (req, res) => {
   }
 });
 
-// Submit a scanned plate manually - simplified: found or unknown
+// Submit a scanned plate - simplified: found or unknown
 router.post('/scan/plate', authMiddleware, async (req, res) => {
   const { session_id, plate_number, latitude, longitude } = req.body;
   if (!session_id || !plate_number) return res.status(400).json({ error: 'معرف الجلسة ورقم اللوحة مطلوبان' });
@@ -122,7 +121,7 @@ router.post('/scan/plate', authMiddleware, async (req, res) => {
   const duplicate = existingResults.find(r => normalizePlate(r.plate_number) === normalizedInput);
   if (duplicate) return res.json({ ...duplicate, duplicate: true });
 
-  // Fix #3: smart vehicle matching — found or unknown only
+  // Smart vehicle matching
   const vehicle = await findVehicleByPlate(db, plate_number);
   const status = vehicle ? 'found' : 'unknown';
 
@@ -137,10 +136,7 @@ router.post('/scan/plate', authMiddleware, async (req, res) => {
 router.post('/scan/complete', authMiddleware, async (req, res) => {
   const { session_id } = req.body;
   const db = await getDb();
-  // Fix #5: use a JS Date ISO string as a parameter instead of inline SQL functions.
-  // This works identically on both SQLite and PostgreSQL.
-  const completedAt = new Date().toISOString();
-  await db.prepare('UPDATE scan_sessions SET completed_at = ? WHERE id = ?').run(completedAt, session_id);
+  await db.prepare("UPDATE scan_sessions SET completed_at = datetime('now') WHERE id = ?").run(session_id);
   const report = await generateReport(session_id);
   res.json(report);
 });
@@ -189,6 +185,7 @@ router.get('/pdf/:sessionId', authMiddleware, adminOnly, async (req, res) => {
   if (!report) return res.status(404).json({ error: 'التقرير غير موجود' });
 
   const db = await getDb();
+  // Get all active vehicles for "not scanned" comparison
   const allVehicles = await db.prepare('SELECT plate_number, description FROM vehicles WHERE is_active = 1').all();
   const scannedNormalized = new Set(report.results.map(r => normalizePlate(r.plate_number)));
   const notScanned = allVehicles.filter(v => !scannedNormalized.has(normalizePlate(v.plate_number)));
@@ -268,13 +265,8 @@ async function generateReport(sessionId) {
 
   if (!session) return null;
 
-  // Fix #4: PostgreSQL returns started_at as a JS Date object, not a string.
-  // Handle both cases safely.
-  session.date = session.started_at
-    ? (session.started_at instanceof Date
-        ? session.started_at.toISOString().split('T')[0]
-        : String(session.started_at).split('T')[0])
-    : new Date().toISOString().split('T')[0];
+  // Add date from started_at
+  session.date = session.started_at ? session.started_at.split('T')[0] : new Date().toISOString().split('T')[0];
 
   // Calculate duration
   if (session.started_at && session.completed_at) {

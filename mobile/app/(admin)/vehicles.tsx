@@ -24,7 +24,6 @@ export default function VehiclesScreen() {
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
-  // Fix #14: importing state with ActivityIndicator while import is in progress
   const [importing, setImporting] = useState(false);
 
   const loadVehicles = async () => {
@@ -109,7 +108,6 @@ export default function VehiclesScreen() {
     );
   };
 
-  // Fix #14: show ActivityIndicator during import and result summary Alert
   const handleImportExcel = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -126,19 +124,19 @@ export default function VehiclesScreen() {
       setImporting(true);
       const file = result.assets[0];
 
+      // Read file as base64 and send to server for parsing
       const fileContent = await FileSystem.readAsStringAsync(file.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
       const res = await importVehiclesFile(fileContent);
-      // Fix #14: show result summary with added / duplicates / errors counts
       Alert.alert(
-        t('success') || 'Import complete',
-        `${t('added') || 'Added'}: ${res.added}\n${t('duplicatesSkipped') || 'Duplicates skipped'}: ${res.duplicates}\n${t('errors') || 'Errors'}: ${res.errors}`,
+        t('success') || 'نجح',
+        `${t('added') || 'أضيفت'}: ${res.added}\n${t('duplicatesSkipped') || 'مكررة'}: ${res.duplicates}\n${t('errors') || 'أخطاء'}: ${res.errors}`
       );
       await loadVehicles();
     } catch (e: any) {
-      Alert.alert(t('error'), e.message || t('importFailed') || 'Import failed');
+      Alert.alert(t('error'), e.message || t('importFailed') || 'فشل الاستيراد');
     } finally {
       setImporting(false);
     }
@@ -193,7 +191,6 @@ export default function VehiclesScreen() {
             onChangeText={setSearch}
           />
         </View>
-        {/* Fix #14: import button shows ActivityIndicator while busy */}
         <TouchableOpacity
           style={[styles.addButton, { backgroundColor: '#28a745' }]}
           onPress={handleImportExcel}
@@ -210,9 +207,7 @@ export default function VehiclesScreen() {
         </TouchableOpacity>
       </View>
 
-      <Text style={[styles.countText, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>
-        {filtered.length} {t('vehicle')}
-      </Text>
+      <Text style={[styles.countText, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{filtered.length} {t('vehicle')}</Text>
 
       <FlatList
         data={filtered}
@@ -396,7 +391,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  cancelBtn: { borderWidth: 1 },
-  cancelBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 16 },
-  saveBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 16 },
+  cancelBtn: {
+    borderWidth: 1,
+  },
+  cancelBtnText: {
+    fontFamily: 'ExpoArabic-SemiBold',
+    fontSize: 16,
+  },
+  saveBtnText: {
+    fontFamily: 'ExpoArabic-SemiBold',
+    fontSize: 16,
+  },
 });

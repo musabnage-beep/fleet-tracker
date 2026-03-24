@@ -68,21 +68,6 @@ router.post('/', authMiddleware, adminOnly, async (req, res) => {
   }
 });
 
-// Fix #9: Change user password (admin only)
-router.put('/:id/password', authMiddleware, adminOnly, async (req, res) => {
-  const { newPassword } = req.body;
-  if (!newPassword || !String(newPassword).trim()) {
-    return res.status(400).json({ error: 'كلمة المرور الجديدة مطلوبة' });
-  }
-  const db = await getDb();
-  const user = await db.prepare('SELECT id FROM users WHERE id = ?').get(Number(req.params.id));
-  if (!user) return res.status(404).json({ error: 'المستخدم غير موجود' });
-
-  const hash = bcrypt.hashSync(String(newPassword).trim(), 10);
-  await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, Number(req.params.id));
-  res.json({ success: true });
-});
-
 // Reset device (admin only)
 router.put('/:id/reset-device', authMiddleware, adminOnly, async (req, res) => {
   const db = await getDb();

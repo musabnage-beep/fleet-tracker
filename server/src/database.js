@@ -126,22 +126,11 @@ function createPgWrapper(pool) {
       const pgSql = convertSqlSyntax(convertPlaceholders(sql));
       return {
         async run(...params) {
-          // Fix #6: Only append RETURNING id for INSERT statements.
-          // UPDATE/DELETE statements do not need it and the blind retry
-          // was swallowing real errors (constraint violations etc.).
-          const isInsert = /^\s*INSERT\s/i.test(pgSql);
-          if (isInsert) {
-            try {
-              const r = await pool.query(pgSql + ' RETURNING id', params);
-              return { lastInsertRowid: r.rows[0] ? r.rows[0].id : 0 };
-            } catch (e) {
-              // Re-throw constraint violations so routes can handle them properly
-              if (e.code === '23505' || e.code === '23503' || e.code === '23502') throw e;
-              // For other unexpected failures, try without RETURNING
-              await pool.query(pgSql, params);
-              return { lastInsertRowid: 0 };
-            }
-          } else {
+          // Try with RETURNING id first, fall back without
+          try {
+            const r = await pool.query(pgSql + ' RETURNING id', params);
+            return { lastInsertRowid: r.rows[0] ? r.rows[0].id : 0 };
+          } catch {
             await pool.query(pgSql, params);
             return { lastInsertRowid: 0 };
           }

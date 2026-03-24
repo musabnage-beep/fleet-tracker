@@ -10,11 +10,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { APP_CONFIG } from '../../constants/config';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppSettings } from '../../contexts/AppSettingsContext';
-import {
-  getUsers, createUser, deleteUser, resetUserDevice,
-  updateAppSettings, uploadLogo, getAnprSettings, updateAnprToken,
-  updateUserPassword,   // Fix #9
-} from '../../services/api';
+import { getUsers, createUser, deleteUser, resetUserDevice, updateAppSettings, uploadLogo, getAnprSettings, updateAnprToken } from '../../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'react-native';
 
@@ -24,34 +20,21 @@ export default function SettingsScreen() {
   const { colors, mode, setTheme } = useTheme();
   const { appName, companyName, logo, refreshSettings } = useAppSettings();
   const router = useRouter();
-
   const [users, setUsers] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-
-  // Add user modal
   const [modalVisible, setModalVisible] = useState(false);
+  const [customizeModal, setCustomizeModal] = useState(false);
+  const [editAppName, setEditAppName] = useState('');
+  const [editCompanyName, setEditCompanyName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'employee'>('employee');
   const [saving, setSaving] = useState(false);
-
-  // App customization modal
-  const [customizeModal, setCustomizeModal] = useState(false);
-  const [editAppName, setEditAppName] = useState('');
-  const [editCompanyName, setEditCompanyName] = useState('');
-
-  // ANPR modal
   const [anprToken, setAnprToken] = useState('');
   const [anprHasToken, setAnprHasToken] = useState(false);
   const [anprModal, setAnprModal] = useState(false);
   const [savingAnpr, setSavingAnpr] = useState(false);
-
-  // Fix #9: change-password modal state
-  const [changePwModal, setChangePwModal] = useState(false);
-  const [changePwUser, setChangePwUser] = useState<any>(null);
-  const [changePwValue, setChangePwValue] = useState('');
-  const [savingPw, setSavingPw] = useState(false);
 
   const loadAnprSettings = async () => {
     try {
@@ -199,42 +182,11 @@ export default function SettingsScreen() {
     ]);
   };
 
-  // Fix #9: change password handler
-  const openChangePassword = (u: any) => {
-    setChangePwUser(u);
-    setChangePwValue('');
-    setChangePwModal(true);
-  };
-
-  const handleChangePassword = async () => {
-    if (!changePwValue.trim()) {
-      Alert.alert(t('alert'), t('allFieldsRequired') || 'Please enter a password');
-      return;
-    }
-    setSavingPw(true);
-    try {
-      await updateUserPassword(changePwUser.id, changePwValue.trim());
-      setChangePwModal(false);
-      setChangePwValue('');
-      Alert.alert(t('success') || 'Success', t('passwordChanged') || 'Password updated successfully');
-    } catch (e: any) {
-      Alert.alert(t('error'), e.message);
-    } finally {
-      setSavingPw(false);
-    }
-  };
-
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={async () => { setRefreshing(true); await loadUsers(); setRefreshing(false); }}
-          colors={[colors.primary]}
-        />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await loadUsers(); setRefreshing(false); }} colors={[colors.primary]} />}
     >
       {/* Profile Card */}
       <View style={[styles.profileCard, { backgroundColor: colors.primary }]}>
@@ -305,9 +257,7 @@ export default function SettingsScreen() {
             onPress={() => setAnprModal(true)}
           >
             <Ionicons name="key-outline" size={16} color={colors.textOnPrimary} />
-            <Text style={[styles.addBtnText, { color: colors.textOnPrimary }]}>
-              {anprHasToken ? t('anprUpdateToken') : t('anprSetToken')}
-            </Text>
+            <Text style={[styles.addBtnText, { color: colors.textOnPrimary }]}>{anprHasToken ? t('anprUpdateToken') : t('anprSetToken')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -316,6 +266,7 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textDark, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('appSettings')}</Text>
         <View style={[styles.infoCard, { backgroundColor: colors.card }]}>
+          {/* Language Toggle */}
           <Text style={[styles.settingLabel, { color: colors.textMedium, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('language')}</Text>
           <View style={styles.toggleRow}>
             <TouchableOpacity
@@ -332,6 +283,7 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Theme Toggle */}
           <Text style={[styles.settingLabel, { color: colors.textMedium, marginTop: 16, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>{t('theme')}</Text>
           <View style={styles.toggleRow}>
             <TouchableOpacity
@@ -382,10 +334,6 @@ export default function SettingsScreen() {
                   <Ionicons name="phone-portrait-outline" size={18} color={colors.warning} />
                 </TouchableOpacity>
               )}
-              {/* Fix #9: Change password button */}
-              <TouchableOpacity onPress={() => openChangePassword(u)}>
-                <Ionicons name="lock-closed-outline" size={18} color={colors.primary} />
-              </TouchableOpacity>
               {u.id !== user?.id && (
                 <TouchableOpacity onPress={() => handleDeleteUser(u)}>
                   <Ionicons name="trash-outline" size={18} color={colors.danger} />
@@ -402,7 +350,7 @@ export default function SettingsScreen() {
         <Text style={[styles.logoutText, { color: colors.danger }]}>{t('logout')}</Text>
       </TouchableOpacity>
 
-      {/* ── Customize Modal ───────────────────────────────────────────────── */}
+      {/* Customize Modal */}
       <Modal visible={customizeModal} transparent animationType="slide">
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
@@ -435,7 +383,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* ── ANPR Token Modal ──────────────────────────────────────────────── */}
+      {/* ANPR Token Modal */}
       <Modal visible={anprModal} transparent animationType="slide">
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
@@ -467,7 +415,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* ── Add User Modal ────────────────────────────────────────────────── */}
+      {/* Add User Modal */}
       <Modal visible={modalVisible} transparent animationType="slide">
         <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
@@ -533,51 +481,6 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* ── Fix #9: Change Password Modal ────────────────────────────────── */}
-      <Modal visible={changePwModal} transparent animationType="slide">
-        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark }]}>
-              {t('changePassword') || 'Change Password'}
-            </Text>
-            <Text style={[styles.fieldLabel, { color: colors.textMedium }]}>
-              {changePwUser?.name}  (@{changePwUser?.username})
-            </Text>
-            <Text style={[styles.fieldLabel, { color: colors.textMedium, marginTop: 12, writingDirection: isRTL ? 'rtl' : 'ltr' }]}>
-              {t('newPassword') || 'New password'} *
-            </Text>
-            <TextInput
-              style={[styles.modalInput, { backgroundColor: colors.surface, color: colors.textDark, borderColor: colors.border, textAlign: 'left' }]}
-              value={changePwValue}
-              onChangeText={setChangePwValue}
-              placeholder={t('newPassword') || 'New password'}
-              placeholderTextColor={colors.textLight}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
-                onPress={() => { setChangePwModal(false); setChangePwValue(''); }}
-              >
-                <Text style={[styles.cancelBtnText, { color: colors.textMedium }]}>{t('cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: colors.primary }, savingPw && { opacity: 0.7 }]}
-                onPress={handleChangePassword}
-                disabled={savingPw}
-              >
-                {savingPw
-                  ? <ActivityIndicator color={colors.textOnPrimary} size="small" />
-                  : <Text style={[styles.saveBtnText, { color: colors.textOnPrimary }]}>{t('save')}</Text>
-                }
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
@@ -610,8 +513,15 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', justifyContent: 'space-between' },
   infoLabel: { fontFamily: 'ExpoArabic-Book', fontSize: 14 },
   infoValue: { fontFamily: 'Urbanist', fontSize: 14, fontWeight: '600' },
-  settingLabel: { fontFamily: 'ExpoArabic-Book', fontSize: 14, marginBottom: 8 },
-  toggleRow: { flexDirection: 'row', gap: 12 },
+  settingLabel: {
+    fontFamily: 'ExpoArabic-Book',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
   toggleBtn: {
     flex: 1,
     height: 44,
@@ -622,7 +532,10 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1,
   },
-  toggleBtnText: { fontFamily: 'ExpoArabic-SemiBold', fontSize: 14 },
+  toggleBtnText: {
+    fontFamily: 'ExpoArabic-SemiBold',
+    fontSize: 14,
+  },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',

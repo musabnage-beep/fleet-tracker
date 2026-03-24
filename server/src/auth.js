@@ -1,16 +1,5 @@
 const jwt = require('jsonwebtoken');
 
-const IS_POSTGRES = !!process.env.DATABASE_URL;
-
-// Fix #7: In production (PostgreSQL) require JWT_SECRET to be set explicitly.
-// Fail fast at startup rather than running with a weak secret.
-if (IS_POSTGRES && !process.env.JWT_SECRET) {
-  console.error('FATAL ERROR: JWT_SECRET environment variable is not set.');
-  console.error('Go to Render → your service → Environment → Add environment variable.');
-  console.error('Example: JWT_SECRET=<run: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))")>');
-  process.exit(1);
-}
-
 const JWT_SECRET = process.env.JWT_SECRET || 'fleet-tracker-secret-key-change-in-production';
 
 function generateToken(user) {
