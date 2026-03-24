@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Fleet Tracker",
+    "slug": "fleet-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F0F3F6"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fleettracker.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "التطبيق يحتاج الكاميرا لمسح لوحات السيارات"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#6EB1BE",
+        "foregroundImage": "./assets/icon.png"
+      },
+      "package": "com.fleettracker.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sharing",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "التطبيق يحتاج الكاميرا لمسح لوحات السيارات"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "التطبيق يحتاج الموقع لتسجيل مكان المسح",
+          "locationWhenInUsePermission": "التطبيق يحتاج الموقع لتسجيل مكان المسح"
+        }
+      ]
+    ],
+    "scheme": "fleettracker",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6a5fb624-84fe-432d-8300-68968666e6e1"
+      }
+    },
+    "owner": "musab7alabi"
+  }
+}
