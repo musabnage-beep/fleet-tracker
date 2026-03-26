@@ -116,7 +116,7 @@ export default function ScanScreen() {
 
       // Convert to base64
       const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: 'base64',
       });
 
       // Send to backend which calls Plate Recognizer API
