@@ -104,10 +104,15 @@ export default function ScanScreen() {
       setProcessing(true);
 
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.9,
-        skipProcessing: true,
+        quality: 0.5,
+        skipProcessing: false,
         shutterSound: false,
       });
+
+      if (!photo || !photo.uri) {
+        console.warn('[ANPR] Camera returned no photo');
+        return;
+      }
 
       // Convert to base64
       const base64 = await FileSystem.readAsStringAsync(photo.uri, {
@@ -133,8 +138,12 @@ export default function ScanScreen() {
         }
       }
 
-    } catch (e) {
+    } catch (e: any) {
       console.warn('[ANPR] Frame processing error:', e);
+      // Show error to user on first failure so they know something is wrong
+      if (results.length === 0) {
+        Alert.alert(t('error'), e.message || 'فشل في قراءة اللوحة - تأكد من الاتصال بالإنترنت');
+      }
     } finally {
       processingRef.current = false;
       setProcessing(false);
